@@ -1,0 +1,55 @@
+{
+  "workdir": "../../data/work",
+  "tesseract": {
+    "lang": "spa",
+    "psm": 3,
+    "tessdata_dir": "../../data/work/tessdata"
+  },
+  "documents": [
+    {
+      "pdf": "../../corpus/pdf/8265031-nts-n-246-minsa-digiesp-2026-parte-1.pdf",
+      "tag": "p1",
+      "start_page": 1,
+      "dpi": 150,
+      "detail_dpi": 300
+    },
+    {
+      "pdf": "../../corpus/pdf/8265031-nts-n-246-minsa-digiesp-2026-parte-2.pdf",
+      "tag": "p2",
+      "start_page": 98,
+      "dpi": 150,
+      "detail_dpi": 300
+    }
+  ],
+  "outputs": [
+    {
+      "name": "../../corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md",
+      "pages": "1-97",
+      "intro": "**NTS N° 246 -MINSA/DGIESP-2026** — *Norma Técnica de Salud que establece el Esquema Nacional de Inmunizaciones*\n\n*Documento convertido del PDF `8265031-nts-n-246-minsa-digiesp-2026-parte-1.pdf` (páginas 1–97).*\n\n*Los marcadores `> _pág. N_` indican la página del original. Se omitieron el encabezado y el pie de página repetidos.*",
+      "fragments": [
+        "../../data/work/frag/p1_001-010.md",
+        "../../data/work/frag/p1_011-012.md",
+        "../../data/work/frag/p1_013-020.md",
+        "../../data/work/frag/p1_021-027.md",
+        "../../data/work/frag/p1_028-036.md",
+        "../../data/work/frag/p1_037-044.md",
+        "../../data/work/frag/p1_045-053.md",
+        "../../data/work/frag/p1_054-065.md",
+        "../../data/work/frag/p1_066-077.md",
+        "../../data/work/frag/p1_078-085.md",
+        "../../data/work/frag/p1_086-097.md"
+      ]
+    },
+    {
+      "name": "../../corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md",
+      "pages": "98-140",
+      "intro": "# NTS N° 246 -MINSA/DGIESP-2026\n\n*Norma Técnica de Salud que establece el Esquema Nacional de Inmunizaciones — Anexos.*\n\n*Documento convertido del PDF `8265031-nts-n-246-minsa-digiesp-2026-parte-2.pdf` (páginas 98–140).*\n\n*Los marcadores `> _pág. N_` indican la página del original. Se omitieron el encabezado y el pie de página repetidos.*",
+      "fragments": [
+        "../../data/work/frag/p2_098-107.md",
+        "../../data/work/frag/p2_108-117.md",
+        "../../data/work/frag/p2_118-130.md",
+        "../../data/work/frag/p2_131-140.md"
+      ]
+    }
+  ]
+}

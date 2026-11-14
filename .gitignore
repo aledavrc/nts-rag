@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.env
+pipelines/ocr/config.json
+
+# Artefactos generados (el corpus y los chunks sí se versionan)
+data/index/
+data/manifest.json
+data/work/
+models/
+
+# Cobertura y tipado
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Empaquetado
+dist/
+build/
+*.egg-info/
+
+# Basura de sistemas operativos
+.DS_Store
+Thumbs.db
+desktop.ini

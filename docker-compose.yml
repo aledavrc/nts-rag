@@ -1,0 +1,20 @@
+services:
+  nts-rag:
+    build: .
+    image: nts-rag:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      # El índice se construye en local con `make index`.
+      - ./data/index:/app/data/index
+      # Los chunks aportan el corpus léxico (BM25) y la metadata.
+      - ./data/chunks:/app/data/chunks:ro
+    environment:
+      NTS_RAG_CHROMA_COLLECTION: nts_246
+      NTS_RAG_LLM_BASE_URL: ${NTS_RAG_LLM_BASE_URL:-}
+      NTS_RAG_LLM_MODEL: ${NTS_RAG_LLM_MODEL:-qwen2.5:7b}
+      NTS_RAG_LLM_API_KEY: ${NTS_RAG_LLM_API_KEY:-ollama}
+      NTS_RAG_LLM_TIMEOUT: ${NTS_RAG_LLM_TIMEOUT:-60}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

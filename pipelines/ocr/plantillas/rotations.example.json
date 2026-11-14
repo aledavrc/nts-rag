@@ -1,0 +1,11 @@
+{
+  "_comentario": "Grados en sentido antihorario para enderezar cada página. Los agentes rotan la imagen antes de leerla.",
+  "p1": {
+    "101": 270,
+    "121": 270
+  },
+  "p2": {
+    "4": 270,
+    "24": 270
+  }
+}

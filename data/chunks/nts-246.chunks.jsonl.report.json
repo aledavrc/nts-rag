@@ -1,0 +1,45 @@
+{
+  "generated": "2026-11-14T23:36:50.980660+00:00",
+  "config": {
+    "max_chars": 1800,
+    "overlap": 0
+  },
+  "files": [
+    {
+      "file": "8265031-nts-n-246-minsa-digiesp-2026-parte-1.md",
+      "chunks": 438,
+      "by_type": {
+        "text": 389,
+        "table": 49
+      },
+      "pages": "1-97",
+      "no_pages": 0,
+      "no_section": 0,
+      "max_chars": 5773,
+      "oversize": 0,
+      "warnings": []
+    },
+    {
+      "file": "8265031-nts-n-246-minsa-digiesp-2026-parte-2.md",
+      "chunks": 210,
+      "by_type": {
+        "table": 37,
+        "text": 173
+      },
+      "pages": "98-140",
+      "no_pages": 0,
+      "no_section": 0,
+      "max_chars": 5861,
+      "oversize": 0,
+      "warnings": []
+    }
+  ],
+  "totals": {
+    "chunks": 648,
+    "by_type": {
+      "text": 562,
+      "table": 86
+    },
+    "chars": 299153
+  }
+}

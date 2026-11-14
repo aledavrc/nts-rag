@@ -1,0 +1,276 @@
+#+TITLE: Comandos de prueba — NTS 246 RAG
+#+STARTUP: showall
+#+OPTIONS: toc:2
+
+Todos los comandos se ejecutan desde la raíz del proyecto.
+
+#+begin_src bash
+cd ~/Projects/own/nts-rag
+API=http://localhost:8000
+#+end_src
+
+* Primer arranque
+
+#+begin_src bash
+make install       # crea .venv e instala dependencias (solo la primera vez)
+make doctor        # comprueba índice, modelo de embeddings y dependencias
+make index         # construye el índice desde los chunks
+make serve         # API en http://127.0.0.1:8000
+#+end_src
+
+Sin el LLM (modo extractivo, sin llamadas externas):
+
+#+begin_src bash
+NTS_RAG_LLM_BASE_URL= make serve
+#+end_src
+
+* Estado del servicio
+
+#+begin_src bash
+curl -sS $API/health | jq
+curl -sS $API/salud | jq
+curl -sS $API/v1/models | jq   # stub OpenAI para silenciar el 404
+#+end_src
+
+Respuesta esperada de ~/health~: ~estado: "ok"~, ~indice_listo: true~ y el número de ~chunks~.
+
+#+begin_src bash
+tail -f /tmp/nts-rag.log     # si redirigiste los logs ahí
+#+end_src
+
+* Consultas por API (curl)
+
+** Respuesta normal
+
+#+begin_src bash
+curl -sS -X POST $API/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué vacunas se aplican a gestantes?"}' | jq
+#+end_src
+
+** Solo el texto de la respuesta
+
+#+begin_src bash
+curl -sS -X POST $API/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Cuál es la composición de la vacuna antineumocócica?"}' \
+  | jq -r .respuesta
+#+end_src
+
+** Más contexto y modo / fuente
+
+#+begin_src bash
+curl -sS -X POST $API/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué vacunas se aplican a gestantes?", "k": 8}' \
+  | jq '{modo, tiempo_ms, paginas: [.fuentes[].pagina]}'
+#+end_src
+
+** Con filtros (sección / página / tipo)
+
+#+begin_src bash
+curl -sS -X POST $API/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué dosis se aplica?", "k": 6,
+       "filtros": {"seccion": "6.1.1.17", "tipo": "tabla"}}' | jq
+#+end_src
+
+#+begin_src bash
+curl -sS -X POST $API/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Cuál es el esquema de la Tdap?", "filtros": {"pagina": 34}}' | jq
+#+end_src
+
+** Solo recuperación, sin LLM (depuración)
+
+#+begin_src bash
+curl -sS -X POST $API/buscar \
+  -H "Content-Type: application/json" \
+  -d '{"consulta": "cadena de frío", "k": 4}' | jq
+#+end_src
+
+#+begin_src bash
+curl -sS -X POST $API/buscar \
+  -H "Content-Type: application/json" \
+  -d '{"consulta": "anafilaxia DPT", "k": 3}' \
+  | jq -r '.resultados[] | "p.\(.pagina) | \(.seccion) | \(.score)"'
+#+end_src
+
+** Swagger
+
+Abrir <http://localhost:8000/docs> en el navegador.
+
+* Consultas por CLI
+
+#+begin_src bash
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es la finalidad de la NTS 246?"
+.venv/bin/python -m nts_rag.cli consultar --render "¿Qué consecuencias tiene una inyección no estéril?"
+.venv/bin/python -m nts_rag.cli consultar --json "¿Cuál es la composición de la vacuna antineumocócica?" | jq -r .respuesta
+.venv/bin/python -m nts_rag.cli buscar "cadena de frío" -k 4
+.venv/bin/python -m nts_rag.cli doctor
+.venv/bin/python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl -k 5
+#+end_src
+
+Con ~--render~ el Markdown se ve con tablas, listas y negritas en la terminal.
+
+* Demostrar el cambio: con rerank, sin rerank y sin LLM
+
+El pipeline completo hace 3 llamadas al LLM: rerank → respuesta → verificación.
+Se pueden quitar las dos últimas de forma independiente.
+
+** Las tres variantes en la CLI
+
+#+begin_src bash
+P="¿Cuál es la composición de la vacuna antineumocócica?"
+
+# 1) Pipeline completo: rerank + respuesta + verificación (3 llamadas)
+.venv/bin/python -m nts_rag.cli consultar --json "$P" \
+  | jq '{modo, paginas: [.fuentes[].pagina]}'
+
+# 2) Sin rerank: respuesta + verificación (2 llamadas)
+.venv/bin/python -m nts_rag.cli consultar --sin-rerank --json "$P" \
+  | jq '{modo, paginas: [.fuentes[].pagina]}'
+
+# 3) Sin LLM: solo recuperación híbrida + extracto verbatim (0 llamadas)
+NTS_RAG_LLM_BASE_URL= .venv/bin/python -m nts_rag.cli consultar --json "$P" \
+  | jq '{modo, paginas: [.fuentes[].pagina]}'
+#+end_src
+
+También con la variable de entorno en vez del flag:
+
+#+begin_src bash
+NTS_RAG_RERANK=false .venv/bin/python -m nts_rag.cli consultar "$P"
+#+end_src
+
+** Resultado real de las tres variantes
+
+Medido con la pregunta del ejemplo:
+
+| Variante              | ~modo~       | Páginas recuperadas       | Tiempo aprox. |
+|-----------------------+-------------+---------------------------+---------------|
+| con rerank            | ~llm~        | 24, 24, 24, 24, 24, 24    | ~6 s          |
+| ~--sin-rerank~        | ~llm~        | 24, 37, 27, 25, 24, 48    | ~5 s          |
+| sin LLM               | ~extractivo~ | 24, 37, 27, 25, 24, 48    | ~2 s          |
+
+Cómo leerlo:
+
+- El rerank reordena/filtra los candidatos: en este caso deja los 6 fragmentos
+  de la página 24 y descarta ruido de otras páginas.
+- Sin rerank el orden es el de la recuperación híbrida (vectorial + BM25), que es
+  exactamente el mismo que usa el modo extractivo.
+- ~modo~ te dice qué camino se tomó: ~llm~ (respuesta redactada) o
+  ~extractivo~ (fragmento literal con cita). El extractivo empieza con
+  "**Según la normativa cargada:**".
+- El tiempo incluye cargar el modelo de embeddings (~1,5–2 s por proceso), por
+  eso la diferencia entre las dos primeras variantes es menor de lo que sugiere
+  el número de llamadas.
+
+** Sin rerank ni verificación (1 sola llamada)
+
+#+begin_src bash
+NTS_RAG_RERANK=false NTS_RAG_VERIFY=false \
+  .venv/bin/python -m nts_rag.cli consultar "$P"
+#+end_src
+
+El ~modo~ sigue siendo ~llm~, pero se pierde la comprobación de fidelidad: si el
+modelo alucina, nadie lo detecta. Úsalo solo para comparar velocidad.
+
+** Comprobar cuántas llamadas se hacen de verdad
+
+Arranca el servidor en una terminal y guarda el log:
+
+#+begin_src bash
+NTS_RAG_RERANK=false make serve 2>&1 | tee /tmp/nts.log
+#+end_src
+
+En otra terminal lanza una consulta y cuenta las peticiones al proveedor:
+
+#+begin_src bash
+curl -sS -X POST http://localhost:8000/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué vacunas se aplican a gestantes?"}' >/dev/null
+
+grep -c "chat/completions" /tmp/nts.log   # esperado: 2 con rerank off, 3 con rerank on
+#+end_src
+
+** Las mismas variantes contra la API
+
+#+begin_src bash
+# Servidor sin rerank
+NTS_RAG_RERANK=false make serve
+
+# En otra terminal: debe devolver modo "llm"
+curl -sS -X POST http://localhost:8000/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué vacunas se aplican a gestantes?"}' \
+  | jq '{modo, paginas: [.fuentes[].pagina]}'
+#+end_src
+
+#+begin_src bash
+# Servidor sin LLM: debe devolver modo "extractivo"
+NTS_RAG_LLM_BASE_URL= make serve
+
+curl -sS -X POST http://localhost:8000/consulta \
+  -H "Content-Type: application/json" \
+  -d '{"pregunta": "¿Qué vacunas se aplican a gestantes?"}' \
+  | jq '{modo, respuesta}'
+#+end_src
+
+** Resumen de combinaciones
+
+| Llamadas al LLM | Comando CLI                                                        | ~modo~       |
+|-----------------+--------------------------------------------------------------------+--------------|
+| 3               | ~consultar "$P"~                                                   | ~llm~        |
+| 2               | ~consultar --sin-rerank "$P"~                                      | ~llm~        |
+| 1               | ~NTS_RAG_RERANK=false NTS_RAG_VERIFY=false consultar "$P"~         | ~llm~        |
+| 0               | ~NTS_RAG_LLM_BASE_URL= consultar "$P"~                             | ~extractivo~ |
+
+Para el servidor, sustituye ~consultar "$P"~ por ~make serve~ y lanza la consulta
+con ~curl~ (o usa ~NTS_RAG_*~ en el entorno de ~make serve~).
+
+* Preguntas de prueba
+
+** Dentro del alcance (deben responder con cita)
+
+#+begin_src bash
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es la finalidad de la NTS 246?"
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es el objetivo general de la norma?"
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es la composición de la vacuna antipoliomielítica oral?"
+.venv/bin/python -m nts_rag.cli consultar "¿Qué hacer si un niño regurgita la vacuna antipoliomielítica oral?"
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es el esquema de vacunación de la Tdap en gestantes?"
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es la composición de la vacuna contra la hepatitis A?"
+.venv/bin/python -m nts_rag.cli consultar "¿Qué tasa de linfadenitis supurativa se asocia a la vacuna BCG?"
+.venv/bin/python -m nts_rag.cli consultar "¿Cuánto tarda en aparecer la anafilaxia asociada a la DPT?"
+#+end_src
+
+** Fuera del alcance (deben abstenerse)
+
+#+begin_src bash
+.venv/bin/python -m nts_rag.cli consultar "¿Cuál es el precio de la vacuna contra el VPH?"
+.venv/bin/python -m nts_rag.cli consultar "¿Qué dice la norma sobre la vacuna contra el ébola?"
+#+end_src
+
+Respuesta esperada: ~No se encontró esa información en la normativa cargada.~
+
+** Lote rápido contra la API
+
+#+begin_src bash
+for q in \
+  "¿Cuál es la finalidad de la NTS 246?" \
+  "¿Cuál es el esquema de vacunación de la Tdap en gestantes?" \
+  "¿Cuánto tarda en aparecer la anafilaxia asociada a la DPT?"
+do
+  echo "== $q"
+  curl -sS -X POST $API/consulta \
+    -H "Content-Type: application/json" \
+    -d "$(jq -nc --arg q "$q" '{pregunta: $q}')" \
+    | jq -r '"\(.modo) | \(.tiempo_ms) ms\n\(.respuesta)\n"'
+done
+#+end_src
+
+* Notas
+
+- El puerto por defecto es el 8000; si está ocupado, arranca sin ~make~:
+  ~.venv/bin/python -m nts_rag.cli servir --port 8011~.
+- ~GET /v1/models~ solo existe para que clientes que sondean la API estilo OpenAI no ensucien el log; el servicio no implementa ~/v1/chat/completions~.
+- La primera consulta puede tardar más: el modelo de embeddings se descarga una sola vez.
