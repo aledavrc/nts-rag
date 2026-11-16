@@ -292,6 +292,7 @@ Por eso "Hit@1 = 20/20" convive con un fallo total en el caso de uso real.
 | 6 | Una sola consulta, sin descomposición | "priorizar" + "recuperables" + "5 años" compiten | Los 6 slots se llenan de variantes del mismo tema |
 | 7 | Sin eje de versión | 2022 no indexada; `DOC_TITLE` fijo | Comparativas imposibles; riesgo de citar norma derogada |
 | 8 | Evaluación solo de lookup | 20/20 con el caso real roto | El benchmark oculta el problema |
+| 9 | Las tablas de continuación de 1 fila se descartan | 2022 6.1.1.9: la fila `USO SIMULTÁNEO` vivía sola en la pág. 19; `_kv_rows` exige ≥3 filas y devuelve `None` | 1 campo perdido (41 en vez de 42) |
 
 ---
 
@@ -351,12 +352,15 @@ listas, sin acentos, mayúsculas y guion bajo.
 | `JERINGAS` | JERINGAS A UTILIZAR (31), JERINGA A UTILIZAR (6), JERINGA (1) | 38 |
 | `EFECTOS_POSTVACUNALES` | POST-VACUNALES (20), POST VACUNALES (18), POSTVACUNALES (4) | 42 |
 | `CONTRAINDICACIONES` | CONTRAINDICACIÓN (21), CONTRAINDICACIONES (18), CONTRAINDICACION (3) | 42 |
-| `USO_SIMULTANEO` | CON OTRAS VACUNAS (40), DE LA VACUNA (1) | 41 |
+| `USO_SIMULTANEO` | CON OTRAS VACUNAS (41), DE LA VACUNA (1) | 42² |
 
 ¹ compuesta: mapea a `{ESQUEMA_DE_VACUNACION, DOSIS}` o se marca `compuesto`.
+² 41 en el corpus original; 42 al integrar la fila de continuación de 6.1.1.9
+(págs. 17–19), que `_kv_rows` descartaba por tener una sola fila de datos.
 
-Evidencia: **26 etiquetas distintas → 13 claves**, cubriendo **541 celdas**
-(231 de 2022 + 310 de 2026) al **100%**.
+Evidencia: **26 etiquetas distintas → 13 claves**, cubriendo **542 celdas**
+(232 de 2022 + 310 de 2026) al **100%**. Antes de integrar la fila de continuación
+de 6.1.1.9 eran 541 (231 + 310).
 
 **Por qué `EFECTOS_POSTVACUNALES` y no `EFECTOS`:**
 
@@ -444,6 +448,8 @@ Reglas:
 
 - **"No consta" ≠ "eliminado".** Que 2022 no declare un campo no significa que la
   norma lo haya quitado.
+- **"No consta" ≠ "no aplica".** `JERINGAS` no aplica en APO y rotavirus (vía oral);
+  no es un dato faltante.
 - Los valores de `TIPO_DE_INMUNIZACION` se normalizan a un vocabulario cerrado
   **multi-etiqueta**: `{viva_atenuada, inactivada, conjugada, recombinante,
   toxoide, subunidad, pasiva}`. Sin esto, 18 de 24 vacunas aparecen como
@@ -677,7 +683,7 @@ a los puntos 1–4. Mejor un mapa explícito y pequeño que "pesos" implícitos.
 |---|---|
 | `pipelines/ocr/md_to_vector.py` | **IDs estables**: `sha1(doc_id + seccion_numero + tipo + texto completo)` y sufijo solo en duplicados reales (hoy usa `texto[:80]` + orden, lo que rompe citas y eval si el OCR reordena). Revisar `split_table` y `--table-max-chars`. El corte por filas vive en `index.py`. |
 | `src/nts_rag/config.py` | Registro `DOCUMENTS` (id, título, año, vigencia, páginas). Eliminar `DOC_TITLE` como fuente de verdad. `index_schema_version = 2`. |
-| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas; etiquetas canónicas + `campo_original`. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). **Manifiesto con `fuentes: {ruta: sha256}`** y `corpus_lint()` que falla si una ficha no tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug. |
+| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas **sin umbral de 3 filas** (acepta continuación de 1 fila); etiquetas canónicas + `campo_original`. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). **Manifiesto con `fuentes: {ruta: sha256}`** y `corpus_lint()` que falla si una ficha no tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug. |
 | `src/nts_rag/text.py` | Sacar `ano/anos` de stopwords (o sustituir por tokens de edad). `extract_ages`. Ampliar `QUERY_SYNONYMS` (rescate/recuperar/completar; anterior/antigua/2022/2026 con contexto). `FIELD_INDICATORS` → claves canónicas + `reaccion`, `adverso`, `secundario`, `postvacunal`. |
 | `src/nts_rag/schemas.py` | `Fuente.documento` real, `vigencia`; request `alcance` (`vigente`/`historica`/`ambas`). |
 | `src/nts_rag/cli.py` | `doctor` compara el `sha256` de los Markdown con el manifiesto y avisa si el índice está desfasado. |
@@ -764,6 +770,7 @@ no sobre mocks.
 | Riesgo | Detalle | Mitigación |
 |---|---|---|
 | **Partir por "y"** | "Difteria **y** tétanos" es *una* vacuna (6.1.1.5/16); "Sarampión **y** rubeola" es *una* (6.1.1.12); "Sarampión, paperas **y** rubeola" es otra (6.1.1.11) | Detectar primero spans de vacunas conocidas y separar **entre** spans, nunca dentro |
+| **Tablas de continuación de 1 fila** | `_kv_rows` exige ≥3 filas; una fila suelta tras un salto de página se pierde (caso 2022 6.1.1.9, `USO SIMULTÁNEO`) | Aceptar tablas de 1+ filas o fusionar continuaciones en el chunker (`Tabla completada con…`) |
 | **`previa` como señal de versión** | "vacunas previas" = dosis anteriores | Solo `norma/versión previa`; nunca suelta |
 | **DT pediátrico vs dT adulto vs DPT** | 6.1.1.5 vs 6.1.1.16 vs 6.1.1.15 | Alias con calificador de edad; match exacto de sigla primero |
 | **Numerales colisionan entre normas** | 2022 6.2.2 = ">5 años"; 2026 6.2.2 = "0–11" | Alinear por `vacuna_slug`, no por numeral |
@@ -826,7 +833,7 @@ pendiente y forma parte de la Fase 1.
 | PRESENTACIÓN | 42 | `PRESENTACION` |
 | TIPO DE INMUNIZACIÓN | 1 | `TIPO_DE_INMUNIZACION` |
 | TIPO DE VACUNA | 41 | `TIPO_DE_INMUNIZACION` |
-| USO SIMULTÁNEO CON OTRAS VACUNAS | 40 | `USO_SIMULTANEO` |
+| USO SIMULTÁNEO CON OTRAS VACUNAS | 41 | `USO_SIMULTANEO` |
 | USO SIMULTÁNEO DE LA VACUNA | 1 | `USO_SIMULTANEO` |
 | VÍA Y SITIO DE ADMINISTRACIÓN | 41 | `VIA_Y_SITIO` |
 | VÍA Y SITIO DE VACUNACIÓN | 1 | `VIA_Y_SITIO` |

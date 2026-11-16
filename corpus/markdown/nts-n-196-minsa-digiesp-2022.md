@@ -246,19 +246,18 @@ Se considera la aplicación de las siguientes vacunas:
 | INDICACIONES | Prevenir las formas clínicas graves de la tuberculosis infantil: meningitis tuberculosa y diseminada. |
 | ESQUEMA DE VACUNACIÓN | Recién nacidos con peso igual o mayor de 1500gr, administrar la dosis correspondiente dentro de las 24 horas de nacidos.<br><br>Si no recibe dentro de las 24 horas, administrar la dosis correspondiente lo antes posible durante el primer año de vida (11 meses 29 días).<br><br>Si no recibe dentro del primer año de vida, administrar la dosis correspondiente hasta los 5 años cumplidos, previo descarte de infección por tuberculosis.<br><br>En el caso de peso menor de 1500gr o niños con alguna situación especial, la aplicación de la vacuna será con indicación médica.<br><br>En el caso de niño prematuro, una vez recuperado el peso de 1500gr, podrá iniciar su vacunación. |
 | DOSIS | Dosis única de 0.05 ml o 0.1 ml (según precisiones del laboratorio productor). |
-
-> _pág. 10_
-
-*Continuación de la ficha 6.1.1.1 (iniciada en la pág. 9): solo se transcriben las filas visibles en esta página.*
-
-| Característica | Descripción |
-| --- | --- |
 | CONSERVACIÓN DE LA VACUNA | + 2°C a +8°C<br>Una vez reconstituida, el tiempo de uso es 6 horas. |
 | VÍA Y SITIO DE ADMINISTRACIÓN | Vía intradérmica. Ver Anexo 5<br><br>Lugar de administración: Región del músculo deltoides del brazo derecho a 2 cm del acromion o vértice del hombro. |
 | JERINGAS A UTILIZAR | Para administrar: De 1 cc con aguja 27G x ½" auto retráctil.<br><br>Para reconstituir: De 5 cc con aguja 21G x 11/2" |
 | POSIBLES EFECTOS POST VACUNALES | Días después de la vacunación puede desarrollarse un nódulo de induración en el sitio de la inyección, que disminuye gradualmente y es reemplazado por una lesión local que puede ulcerarse semanas más tarde. Esta lesión local no requiere tratamiento. |
 | CONTRAINDICACIONES | • Recién nacidos con un peso inferior a 1,500 gr. u otra condición médica que impida la vacunación.<br>• Enfermedades infecciosas (especialmente sarampión y varicela), debiendo esperar 1 mes de transcurridas estas infecciones para su aplicación.<br>• Reacciones dermatológicas severas en el área de aplicación.<br>• Inmunodeficiencia.<br>• En situaciones especiales debidamente sustentadas con indicación médica. |
 | USO SIMULTÁNEO CON OTRAS VACUNAS | Se puede aplicar simultáneamente con cualquier otra vacuna ya sean estas virales, bacterianas u otras. Ver Anexo 1 |
+
+*Tabla completada con la pág. 10.*
+
+> _pág. 10_
+
+*Las filas finales de la ficha 6.1.1.1 (iniciada en la pág. 9) se integraron a su tabla en la pág. 9.*
 
 ##### 6.1.1.2 VACUNA CONTRA HEPATITIS B (HvB)
 
@@ -446,8 +445,9 @@ Se considera la aplicación de las siguientes vacunas:
 | JERINGAS A UTILIZAR | 1 cc y aguja 25 G x 1", auto retráctil |
 | POSIBLES EFECTOS POST VACUNALES | Reacciones locales:<br>Dolor, eritema, edema e induración en el sitio de la inyección.<br><br>Reacciones sistémicas:<br>Alza térmica, irritabilidad, somnolencia, pérdida de apetito, vómitos, diarreas, reacción cutánea. |
 | CONTRAINDICACIONES | Hipersensibilidad a cualquiera de los componentes de la vacuna incluida el toxoide de la difteria.<br><br>Reacción anafiláctica a una dosis previa. |
+| USO SIMULTÁNEO CON OTRAS VACUNAS | Administrar simultáneamente con cualquier otra vacuna virales, bacterianas u otras, debe ser aplicada en sitios anatómicos diferentes (2.5 cm de distancia mínima). Ver Anexo 1 |
 
-*Tabla completada con la pág. 18.*
+*Tabla completada con las págs. 18 y 19.*
 
 > _pág. 18_
 
@@ -455,11 +455,7 @@ Se considera la aplicación de las siguientes vacunas:
 
 > _pág. 19_
 
-*Continuación de la ficha 6.1.1.9 (iniciada en la pág. 17): solo se transcribe la fila final visible en esta página.*
-
-| Característica | Descripción |
-| --- | --- |
-| USO SIMULTÁNEO CON OTRAS VACUNAS | Administrar simultáneamente con cualquier otra vacuna virales, bacterianas u otras, debe ser aplicada en sitios anatómicos diferentes (2.5 cm de distancia mínima). Ver Anexo 1 |
+*La fila final de la tabla 6.1.1.9 (USO SIMULTÁNEO CON OTRAS VACUNAS) se integró a la tabla iniciada en la pág. 17.*
 
 ##### 6.1.1.10 VACUNA CONTRA SARAMPIÓN, PAPERAS Y RUBEOLA (SPR)
 
