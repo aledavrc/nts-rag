@@ -2,8 +2,8 @@
 
 Sistema de consulta en lenguaje natural sobre la *Norma Técnica de Salud que
 establece el Esquema Nacional de Inmunizaciones*. Responde únicamente con el
-contenido de los Markdown auditados de este repositorio y devuelve la página y
-la sección que sustentan cada respuesta.
+contenido de los Markdown auditados e indexados de este repositorio y devuelve la
+página y la sección que sustentan cada respuesta.
 
 Este proyecto **no vuelve a hacer OCR ni validaciones de ingesta**: los archivos
 `corpus/markdown/8265031-...-parte-1.md` y `...-parte-2.md` ya son la fuente de
@@ -24,9 +24,10 @@ corpus/markdown/*.md
     → API FastAPI / CLI
 ```
 
-La decisión de diseño es deliberada: al ser precisa la ingesta, el sistema de
-consulta no necesita léxico corrector, normalización de valores dudosos, fusión
-inter-página, overrides ni banderas de revisión. Solo indexa, recupera y cita.
+Estado actual: la recuperación acierta en preguntas de un campo o una ficha, pero
+todavía falla en preguntas por edad, comparativas y dosis de rescate. El análisis y
+el plan de la siguiente iteración están en
+[`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
 
 La recuperación combina:
 
@@ -50,6 +51,9 @@ Los filtros de la API permiten acotar por sección, página o tipo de fragmento.
 | Páginas | 140 (97 + 43) con numeración impresa continua |
 | Chunks | 1004 (648 base + 356 campos de ficha) |
 | Entrada | `data/chunks/nts-246.chunks.jsonl` |
+
+La NTS 196-2022 está en `corpus/` (Markdown y PDF) pero **aún no está indexada**;
+su ingesta forma parte de la siguiente iteración.
 
 Cada chunk ya contiene `section`, `section_number`, `pages`, `type`, `text` y
 `embed_text`. El índice embebe `embed_text` (sección + páginas + contenido) y
@@ -210,6 +214,7 @@ nts-rag/
 │   └── manifest.json             # metadatos del índice (versionado)
 ├── docs/
 │   ├── PROCESO.md                # decisiones y verificaciones del OCR
+│   ├── CONTEXTO_MEJORAS.md       # estado, análisis y plan de mejoras
 │   └── COMANDOS.org              # recetario de pruebas de API/CLI
 ├── eval/preguntas.jsonl          # 20 preguntas con respuesta + 5 fuera de alcance
 ├── models/                       # caché de FastEmbed (ignorada)
@@ -272,14 +277,27 @@ Resultado actual: **Hit@1 = 20/20** y **Hit@5 = 20/20**; 4/5 preguntas fuera de
 alcance se abstienen y la restante devuelve un fragmento relacionado (el
 paracetamol sí se menciona en el Anexo 6).
 
+Estos números miden solo preguntas de lookup de una ficha. Los sets de agregación,
+comparación y ambigüedad están definidos en `docs/CONTEXTO_MEJORAS.md` pero todavía
+no se evalúan.
+
 ## Limitaciones
 
-- El sistema solo conoce la norma cargada.
-- La recuperación es vectorial + BM25 sin re-ranker: en preguntas ambiguas o con
-  vocabulario muy genérico puede no acertar el fragmento exacto en primer lugar.
+- El sistema solo conoce las normas indexadas (hoy, la NTS 246-2026).
+- La recuperación es vectorial + BM25 con re-rankeo LLM opcional; en preguntas
+  ambiguas o con vocabulario muy genérico puede no acertar el fragmento exacto.
+- Las preguntas por edad, las comparativas entre vacunas o normas y la dosis de
+  rescate son el foco de la siguiente iteración.
 - La abstención es heurística: una pregunta ajena que comparta vocabulario con
   la norma puede devolver un fragmento relacionado en lugar de abstenerse.
 - El modo extractivo no redacta una síntesis; devuelve el fragmento más
   relevante con su cita.
 - Una respuesta bien formada no garantiza la exactitud del dato clínico:
   contrasta siempre con el Markdown o el PDF original.
+
+## Mejoras esperadas
+
+El estado actual, el análisis y el plan de la siguiente iteración (esquema v2,
+corpus 2022, preguntas por edad, comparativas, matriz de fichas, abstención y coste)
+están en [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md). Léelo antes de
+cambiar la recuperación o el esquema de chunks.
