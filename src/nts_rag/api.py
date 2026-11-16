@@ -82,10 +82,15 @@ def root() -> dict:
 def _estado(request: Request) -> SaludResponse:
     retriever = request.app.state.retriever
     settings = request.app.state.settings
+    indexed = retriever.chunk_count if retriever is not None else 0
+    expected = len(retriever.chunks) if retriever is not None else 0
+    # Listo solo si el índice tiene exactamente los chunks esperados: uno
+    # parcial o desfasado responde, pero no es fiable.
+    listo = 0 < indexed == expected
     return SaludResponse(
-        estado="ok" if retriever is not None else "degradado",
-        indice_listo=retriever is not None,
-        chunks=retriever.chunk_count if retriever is not None else 0,
+        estado="ok" if listo else "degradado",
+        indice_listo=listo,
+        chunks=indexed,
         coleccion=settings.chroma_collection,
         embedding_model=settings.embedding_model,
         llm_configurado=bool(settings.llm_base_url),

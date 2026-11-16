@@ -13,7 +13,8 @@ def _split_inline_bullets(value: str) -> list[str] | None:
     """Detecta listas inline tipo '+ a + b' o '* a * b'."""
 
     for marker in ("+", "*"):
-        pattern = re.compile(rf"\s*{re.escape(marker)}\s+")
+        # Solo si el marcador inicia palabra: "+ 2° a + 8° C" es una temperatura.
+        pattern = re.compile(rf"(?<!\S){re.escape(marker)}\s+(?=[^\W\d_])")
         if len(pattern.findall(value)) < 2:
             continue
         items = [item.strip(" +*") for item in pattern.split(value) if item.strip(" +*")]

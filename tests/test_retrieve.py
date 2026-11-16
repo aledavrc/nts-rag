@@ -1,5 +1,6 @@
 from nts_rag.index import normalize_record
 from nts_rag.rag.retrieve import (
+    FIELD_INDICATORS,
     Retriever,
     _where,
     section_number_in_query,
@@ -69,6 +70,11 @@ def test_section_number_in_query_uses_boundaries():
     assert section_number_in_query("6.1.1.17", "¿Qué dice el 6.1.1.17?")
     assert not section_number_in_query("6.1.1.1", "¿Qué dice el 6.1.1.17?")
     assert not section_number_in_query("6.1.1.1", "¿Qué dice el 6.1.1.10?")
+
+
+def test_field_indicators_are_compared_as_stems():
+    assert "dosi" in FIELD_INDICATORS
+    assert "efecto" in FIELD_INDICATORS
 
 
 def test_query_expansion_for_gestante():

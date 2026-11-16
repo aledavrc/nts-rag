@@ -16,7 +16,6 @@ El detalle del procedimiento está en README.md y GUIA-DE-ESTILO.md.
 import argparse
 import csv
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -168,8 +167,8 @@ def cmd_prepare(args):
 
 
 def cmd_sheets(args):
-    from PIL import Image
     import pymupdf
+    from PIL import Image
 
     cfg, base = load_config(args.config)
     work = rp(base, cfg.get("workdir", "work"))
@@ -297,24 +296,28 @@ def cmd_validate(args):
         terr = table_errors(lines)
         jumps = []
         prev = 0
-        for i, l in enumerate(lines, 1):
-            m = re.match(r"^(#{1,6}) ", l)
+        for i, line in enumerate(lines, 1):
+            m = re.match(r"^(#{1,6}) ", line)
             if m:
                 lv = len(m.group(1))
                 if lv > prev + 1:
                     jumps.append((i, f"{prev}->{lv}"))
                 prev = lv
         tags = []
-        for i, l in enumerate(lines, 1):
-            if l.count("<sup>") != l.count("</sup>") or l.count("<sub>") != l.count("</sub>"):
+        for i, line in enumerate(lines, 1):
+            balanced = line.count("<sup>") == line.count("</sup>")
+            if not balanced or line.count("<sub>") != line.count("</sub>"):
                 tags.append(i)
         bold = []
-        for i, l in enumerate(lines, 1):
+        for i, line in enumerate(lines, 1):
             # tras escape_footnotes, (**) ya no existe; cuenta ** de énfasis
-            if l.count("**") % 2 == 1:
+            if line.count("**") % 2 == 1:
                 bold.append(i)
-        unbolted = [i for i, l in enumerate(lines, 1)
-                    if re.match(r"^- [A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9. ]{0,30}: ", l)]
+        unbolted = [
+            i
+            for i, line in enumerate(lines, 1)
+            if re.match(r"^- [A-ZÁÉÍÓÚÑ0-9][A-ZÁÉÍÓÚÑ0-9. ]{0,30}: ", line)
+        ]
 
         errs = (len(missing) + len(dups) + len(extra) + len(terr)
                 + len(jumps) + len(tags) + len(bold) + len(unbolted))

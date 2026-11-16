@@ -1,3 +1,6 @@
+from fastapi.testclient import TestClient
+
+from nts_rag.api import app
 from nts_rag.config import Settings
 from nts_rag.rag import answer as answer_mod
 from nts_rag.rag.answer import AnswerResult
@@ -41,3 +44,45 @@ def test_run_query_skips_rerank_when_disabled(monkeypatch):
 
     assert len(chunks) == 1
     assert result.text == "ok"
+
+
+def test_salud_degrades_when_the_index_is_incomplete():
+    from types import SimpleNamespace
+
+    from nts_rag.api import _estado
+
+    state = SimpleNamespace(
+        retriever=SimpleNamespace(chunk_count=900, chunks=[{}] * 994),
+        settings=Settings(),
+    )
+    request = SimpleNamespace(app=SimpleNamespace(state=state))
+
+    estado = _estado(request)
+    assert estado.estado == "degradado"
+    assert estado.indice_listo is False
+    assert estado.chunks == 900
+
+    state.retriever = SimpleNamespace(chunk_count=994, chunks=[{}] * 994)
+    assert _estado(request).estado == "ok"
+
+
+def test_buscar_route_returns_sources(monkeypatch):
+    monkeypatch.setattr(app.state, "retriever", _FakeRetriever(), raising=False)
+
+    response = TestClient(app).post("/buscar", json={"consulta": "vph", "k": 2})
+
+    assert response.status_code == 200
+    fuente = response.json()["resultados"][0]
+    assert fuente["pagina"] == 1
+    assert fuente["seccion"] == "6.1"
+    assert fuente["tipo"] == "texto"
+
+
+def test_buscar_route_returns_503_without_index(monkeypatch):
+    monkeypatch.setattr(app.state, "retriever", None, raising=False)
+    monkeypatch.setattr(app.state, "error", "El índice no está construido.", raising=False)
+
+    response = TestClient(app).post("/buscar", json={"consulta": "vph"})
+
+    assert response.status_code == 503
+    assert "no disponible" in response.json()["detail"]

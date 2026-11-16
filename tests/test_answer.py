@@ -85,6 +85,16 @@ def test_rerank_keeps_order_on_bad_output(monkeypatch):
     assert [c.pagina for c in ranked] == [1, 2]
 
 
+def test_rerank_does_not_duplicate_a_repeated_index(monkeypatch):
+    settings = Settings(llm_base_url="http://localhost:11434/v1")
+    chunks = [_chunk("fragmento A", 1), _chunk("fragmento B", 2)]
+    monkeypatch.setattr(answer_mod, "_chat", lambda *a, **k: "[1, 1, 2]")
+
+    ranked = rerank_with_llm(settings, "pregunta", chunks, top_k=2)
+
+    assert [c.pagina for c in ranked] == [1, 2]
+
+
 def test_verify_grounded(monkeypatch):
     settings = Settings(llm_base_url="http://localhost:11434/v1", verify=True)
     chunks = [_chunk("FINALIDAD Contribuir a disminuir la morbimortalidad.")]

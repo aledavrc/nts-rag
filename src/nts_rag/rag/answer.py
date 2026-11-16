@@ -13,6 +13,9 @@ from nts_rag.text import expand_tokens, tokenize
 
 logger = logging.getLogger(__name__)
 
+# Un solo cliente reutiliza la conexión en las tres llamadas de cada consulta.
+_client = httpx.Client()
+
 NO_ANSWER = "No se encontró esa información en la normativa cargada."
 
 GENERIC_QUERY_TERMS = {
@@ -194,7 +197,7 @@ def _chat(
         ],
     }
     try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=settings.llm_timeout)
+        response = _client.post(url, json=payload, headers=headers, timeout=settings.llm_timeout)
         response.raise_for_status()
         data = response.json()
         text = data["choices"][0]["message"]["content"].strip()
@@ -234,7 +237,7 @@ def rerank_with_llm(
     except ValueError:
         return candidates[:top_k]
 
-    ranked = [candidates[i - 1] for i in order if 1 <= i <= len(candidates)]
+    ranked = [candidates[i - 1] for i in dict.fromkeys(order) if 1 <= i <= len(candidates)]
     ranked += [c for c in candidates if c not in ranked]
     return ranked[:top_k]
 

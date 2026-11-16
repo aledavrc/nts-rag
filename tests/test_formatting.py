@@ -17,6 +17,12 @@ def test_format_inline_bullets_in_table_cell():
     assert "• Eritema" in formatted
 
 
+def test_temperature_range_is_not_a_bullet_list():
+    text = "| CONSERVACIÓN | + 2° a + 8° C |"
+    formatted = format_chunk_markdown(text)
+    assert "+ 2° a + 8° C" in formatted
+
+
 def test_clip_markdown_preserves_table_and_lines():
     text = "| A | B |\n|---|---|\n| 1 | 2 |"
     clipped = clip_markdown(text, 100)

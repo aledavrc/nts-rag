@@ -36,7 +36,7 @@ test:
 	$(PY) -m pytest -q
 
 lint:
-	$(PY) -m ruff check src tests
+	$(PY) -m ruff check src tests pipelines
 
 doctor:
 	$(PY) -m nts_rag.cli doctor

@@ -228,7 +228,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         chroma_ready,
         "make index (reconstruye desde los chunks)",
     )
-    check("Modelo de embeddings", cache_ready, "se descarga en la primera indexación")
+    check("Modelo de embeddings", cache_ready, "se descarga en la primera consulta")
     check(
         "Dependencias de consulta",
         importlib.util.find_spec("chromadb") is not None,
@@ -242,10 +242,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "make chunks",
     )
 
-    if chroma_ready and cache_ready:
-        print("\nListo para consultar: make serve")
+    if chroma_ready:
+        print("\nListo para consultar: make serve (el modelo se descarga en la primera consulta)")
     else:
-        print("\nAún no se puede consultar: falta el índice o el modelo de embeddings.")
+        print("\nAún no se puede consultar: falta el índice (make index).")
 
 
 def cmd_servir(args: argparse.Namespace) -> None:

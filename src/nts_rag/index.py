@@ -120,9 +120,10 @@ def _is_label(value: str) -> bool:
 def _kv_rows(text: str) -> list[tuple[str, str]] | None:
     """Detecta una ficha key-value (tabla de 2 columnas con etiquetas en MAYÚSCULA).
 
-    Las fichas 6.1.1.x tienen forma `| TIPO DE VACUNA | ... |`. El resto de
-    tablas (matrices con encabezado de varias columnas o filas con siglas en la
-    primera celda) no se parten: se conservan como tabla completa.
+    Las fichas 6.1.1.x tienen forma `| TIPO DE VACUNA | ... |`. Se descarta el
+    encabezado y se parten las filas que parecen un campo; así una fila suelta
+    (p. ej. `HvB` en el Anexo 2) no anula el resto. Las matrices de varias
+    columnas siguen sin partirse.
     """
 
     lines = [line for line in text.splitlines() if line.lstrip().startswith("|")]
@@ -132,16 +133,11 @@ def _kv_rows(text: str) -> list[tuple[str, str]] | None:
     if not non_sep:
         return None
 
-    body = non_sep[1:] if not _is_label(_split_cells(non_sep[0])[0]) else non_sep
     rows: list[tuple[str, str]] = []
-    for line in body:
+    for line in non_sep[1:]:
         cells = _split_cells(line)
-        if len(cells) != 2:
-            return None
-        label, value = cells
-        if not _is_label(label) or not value:
-            return None
-        rows.append((label, value))
+        if len(cells) == 2 and _is_label(cells[0]) and cells[1]:
+            rows.append((cells[0], cells[1]))
     if len(rows) < 3:
         return None
     return rows
@@ -206,16 +202,12 @@ def _metadata(chunk: dict[str, Any]) -> dict[str, str | int | float | bool]:
     return metadata
 
 
-def get_collection(settings: Settings, *, reset: bool = False):
+def get_collection(settings: Settings, *, reset: bool = False, path: Path | None = None):
+    path = path or settings.chroma_dir
     if reset:
-        shutil.rmtree(settings.chroma_dir, ignore_errors=True)
-        settings.chroma_dir.mkdir(parents=True, exist_ok=True)
-    client = chromadb.PersistentClient(path=str(settings.chroma_dir))
-    if reset:
-        try:
-            client.delete_collection(settings.chroma_collection)
-        except Exception:  # noqa: BLE001 - la colección puede no existir
-            pass
+        shutil.rmtree(path, ignore_errors=True)
+        path.mkdir(parents=True, exist_ok=True)
+    client = chromadb.PersistentClient(path=str(path))
     return client.get_or_create_collection(
         name=settings.chroma_collection,
         configuration={"hnsw": {"space": "cosine"}},
@@ -229,7 +221,10 @@ def build_index(settings: Settings, *, reset: bool = True) -> int:
     if not chunks:
         raise ValueError(f"No hay chunks en {settings.chunks_path}")
 
-    collection = get_collection(settings, reset=reset)
+    # Se construye aparte y se cambia al final: si falla a mitad, el índice
+    # anterior sigue sirviendo.
+    target = settings.chroma_dir.with_name(f"{settings.chroma_dir.name}.tmp") if reset else None
+    collection = get_collection(settings, reset=reset, path=target)
     embedder = Embedder(settings)
 
     batch_size = 128
@@ -243,6 +238,10 @@ def build_index(settings: Settings, *, reset: bool = True) -> int:
             metadatas=[_metadata(chunk) for chunk in batch],
         )
         print(f"[index] {min(start + batch_size, len(chunks))}/{len(chunks)}")
+
+    if target is not None:
+        shutil.rmtree(settings.chroma_dir, ignore_errors=True)
+        target.rename(settings.chroma_dir)
 
     manifest = {
         "documento": DOC_TITLE,

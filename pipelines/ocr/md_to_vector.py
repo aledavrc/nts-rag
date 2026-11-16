@@ -26,7 +26,7 @@ import hashlib
 import json
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 PAGE_RE = re.compile(r"^>\s*_pág[s]?\.\s*([0-9]+(?:\s*[–-]\s*[0-9]+)?)")
@@ -182,7 +182,7 @@ def parse_blocks(path, include_preamble=False):
         if m:
             lvl = len(m.group(1))
             title = clean_text(m.group(2).strip())
-            stack = [(l, t) for l, t in stack if l < lvl] + [(lvl, title)]
+            stack = [(level, t) for level, t in stack if level < lvl] + [(lvl, title)]
             if lvl == 1 and not doc_title:
                 doc_title = title
             i += 1
@@ -204,7 +204,9 @@ def parse_blocks(path, include_preamble=False):
                 continue
             bad = table_width_error(rows)
             if bad:
-                warnings.append(f"tabla con filas de distinto ancho en líneas {i + 1}+ (filas {bad[:5]})")
+                warnings.append(
+                    f"tabla con filas de distinto ancho en líneas {i + 1}+ (filas {bad[:5]})"
+                )
             pages = list(current_pages)
             # nota de completado inmediatamente después
             k = j
@@ -213,7 +215,8 @@ def parse_blocks(path, include_preamble=False):
             if k < len(lines):
                 cm = COMPLETION_RE.search(lines[k])
                 if cm:
-                    pages = sorted(set(pages) | set(parse_pages(cm.group(1).replace(" y ", "–").replace(", ", "–"))))
+                    extra = cm.group(1).replace(" y ", "–").replace(", ", "–")
+                    pages = sorted(set(pages) | set(parse_pages(extra)))
             last_table = add("table", "\n".join(rows), pages, rows=rows)
             i = j
             continue
@@ -263,7 +266,7 @@ def main():
     args = ap.parse_args()
 
     all_chunks = []
-    report = {"generated": datetime.now(timezone.utc).isoformat(),
+    report = {"generated": datetime.now(UTC).isoformat(),
               "config": {"max_chars": args.max_chars, "overlap": args.overlap},
               "files": [], "totals": {}}
 
@@ -272,7 +275,14 @@ def main():
         if not p.exists():
             print(f"ERROR: no existe {p}", file=sys.stderr)
             sys.exit(1)
-        chunks, warnings = make_chunks_for_file(str(p), args.max_chars, args.overlap, args.keep_markdown, args.include_preamble, args.table_max_chars)
+        chunks, warnings = make_chunks_for_file(
+            str(p),
+            args.max_chars,
+            args.overlap,
+            args.keep_markdown,
+            args.include_preamble,
+            args.table_max_chars,
+        )
         all_chunks.extend(chunks)
         by_type = {}
         pages = set()
@@ -287,7 +297,11 @@ def main():
             "no_pages": sum(1 for c in chunks if not c["pages"]),
             "no_section": sum(1 for c in chunks if not c["section"]),
             "max_chars": max((c["chars"] for c in chunks), default=0),
-            "oversize": sum(1 for c in chunks if c["chars"] > (args.table_max_chars if c["type"] == "table" else args.max_chars)),
+            "oversize": sum(
+                1
+                for c in chunks
+                if c["chars"] > (args.table_max_chars if c["type"] == "table" else args.max_chars)
+            ),
             "warnings": warnings,
         })
         print(f"{p.name}: {len(chunks)} fragmentos {by_type}")
@@ -325,9 +339,11 @@ def main():
     print(f"Fragmentos: {out} ({len(all_chunks)} registros)")
 
 
-def make_chunks_for_file(path, max_chars, overlap, keep_markdown, include_preamble=False, table_max_chars=None):
-    table_max_chars = table_max_chars or max_chars
+def make_chunks_for_file(
+    path, max_chars, overlap, keep_markdown, include_preamble=False, table_max_chars=None
+):
     """Igual que make_chunks pero conservando sección/páginas por fragmento."""
+    table_max_chars = table_max_chars or max_chars
     doc_title, blocks, warnings = parse_blocks(path, include_preamble)
     source = Path(path).name
     chunks = []
@@ -351,7 +367,9 @@ def make_chunks_for_file(path, max_chars, overlap, keep_markdown, include_preamb
                 t = clean_text("\n".join(part))
                 if len(t) > table_max_chars:
                     warnings.append(
-                        f"tabla de {len(t)} caracteres supera table-max-chars (no se puede partir por filas)")
+                        f"tabla de {len(t)} caracteres supera table-max-chars "
+                        "(no se puede partir por filas)"
+                    )
                 chunks.append({
                     "type": "table", "part": idx, "parts": len(parts),
                     "text": t, "markdown": "\n".join(part) if keep_markdown else None,
@@ -370,10 +388,7 @@ def make_chunks_for_file(path, max_chars, overlap, keep_markdown, include_preamb
 
     out = []
     for c in chunks:
-        if c["type"] == "table":
-            context = c["_context"]
-        else:
-            context = c["_context"]
+        context = c["_context"]
         embed = (context + "\n" + c["text"]) if context else c["text"]
         h = hashlib.sha1(f"{source}|{context}|{c['text'][:80]}".encode()).hexdigest()[:16]
         rec = {

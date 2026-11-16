@@ -1,4 +1,9 @@
+import pytest
+
+import nts_rag.index as index_mod
+from nts_rag.config import Settings
 from nts_rag.index import (
+    build_index,
     expand_field_chunks,
     load_chunks,
     normalize_record,
@@ -124,5 +129,42 @@ def test_does_not_expand_mixed_case_two_columns():
         "| HvB | Si no se administró en las primeras 12 horas |"
     )
     assert expand_field_chunks([table]) == [table]
+
+
+def test_expands_the_rows_that_look_like_fields():
+    table = _ficha(
+        text="| VACUNA | PRECISIONES |\n"
+        "|---|---|\n"
+        "| BCG | dosis |\n"
+        "| HvB | dosis |\n"
+        "| IPV | dosis |\n"
+        "| DPT | dosis |"
+    )
+    campos = [c["campo"] for c in expand_field_chunks([table]) if c["tipo"] == "campo"]
+    assert campos == ["BCG", "IPV", "DPT"]
+
+
+def test_failed_build_keeps_the_previous_index(tmp_path, monkeypatch):
+    settings = Settings(
+        data_dir=tmp_path,
+        models_dir=tmp_path / "models",
+        chunks_path=tmp_path / "chunks.jsonl",
+    )
+    settings.chunks_path.write_text(
+        '{"id": "a", "section": "X > Y", "type": "text", "text": "hola"}',
+        encoding="utf-8",
+    )
+    settings.chroma_dir.mkdir(parents=True)
+    (settings.chroma_dir / "keep").write_text("índice anterior", encoding="utf-8")
+
+    class BrokenEmbedder:
+        def __init__(self, _settings):
+            raise RuntimeError("sin modelo")
+
+    monkeypatch.setattr(index_mod, "Embedder", BrokenEmbedder)
+    with pytest.raises(RuntimeError):
+        build_index(settings)
+
+    assert (settings.chroma_dir / "keep").exists()
 
 

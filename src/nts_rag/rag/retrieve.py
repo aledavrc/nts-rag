@@ -36,21 +36,24 @@ SECTION_GENERIC = {
 # Términos que, en la pregunta, apuntan a un campo concreto de una ficha.
 # "esquema" y "tipo" se excluyen porque también aparecen en preguntas generales.
 FIELD_INDICATORS = {
-    "administracion",
-    "cantidad",
-    "composicion",
-    "conservacion",
-    "contraindicacion",
-    "descripcion",
-    "dosis",
-    "efectos",
-    "indicacion",
-    "jeringa",
-    "jeringas",
-    "presentacion",
-    "simultaneo",
-    "sitio",
-    "via",
+    stem(word)
+    for word in {
+        "administracion",
+        "cantidad",
+        "composicion",
+        "conservacion",
+        "contraindicacion",
+        "descripcion",
+        "dosis",
+        "efectos",
+        "indicacion",
+        "jeringa",
+        "jeringas",
+        "presentacion",
+        "simultaneo",
+        "sitio",
+        "via",
+    }
 }
 
 
@@ -269,4 +272,4 @@ class Retriever:
 
     @property
     def chunk_count(self) -> int:
-        return len(self.chunks)
+        return self.collection.count()
