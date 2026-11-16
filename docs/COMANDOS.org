@@ -107,11 +107,18 @@ Abrir <http://localhost:8000/docs> en el navegador.
 .venv/bin/python -m nts_rag.cli consultar --render "¿Qué consecuencias tiene una inyección no estéril?"
 .venv/bin/python -m nts_rag.cli consultar --json "¿Cuál es la composición de la vacuna antineumocócica?" | jq -r .respuesta
 .venv/bin/python -m nts_rag.cli buscar "cadena de frío" -k 4
+.venv/bin/python -m nts_rag.cli inspeccionar "dosis de la vacuna antineumocócica" -k 3
 .venv/bin/python -m nts_rag.cli doctor
 .venv/bin/python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl -k 5
 #+end_src
 
 Con ~--render~ el Markdown se ve con tablas, listas y negritas en la terminal.
+
+~inspeccionar~ muestra la estructura del índice (colección, registros, dimensión
+384, metadatos, tipos) y luego los vectores que activa la pregunta: similitud,
+página, sección y las primeras componentes del embedding. Admite ~--json~ y
+~--sin-vector~. Equivalente con make:
+~make inspeccionar PREGUNTA="cadena de frío" K=2~.
 
 * Demostrar el cambio: con rerank, sin rerank y sin LLM
 

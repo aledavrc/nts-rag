@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 
 from nts_rag.config import get_settings
-from nts_rag.index import build_index
+from nts_rag.index import build_index, get_collection
 from nts_rag.rag.answer import run_query
+from nts_rag.rag.embeddings import Embedder
 from nts_rag.rag.retrieve import Retriever
 from nts_rag.text import normalize_for_match
 
@@ -67,6 +69,102 @@ def cmd_consultar(args: argparse.Namespace) -> None:
 
 def cmd_buscar(args: argparse.Namespace) -> None:
     _print_chunks(get_settings(), args.consulta, args.k)
+
+
+def _preview_vector(vector, width: int = 6) -> list[float]:
+    return [round(float(value), 4) for value in vector[:width]]
+
+
+def cmd_inspeccionar(args: argparse.Namespace) -> None:
+    """Estructura del índice y vectores que activa una pregunta concreta."""
+
+    settings = get_settings()
+    collection = get_collection(settings)
+    total = collection.count()
+    if total == 0:
+        raise SystemExit(
+            f"La colección {settings.chroma_collection!r} está vacía: ejecuta `make index`."
+        )
+
+    metadatas = collection.get(limit=total, include=["metadatas"])["metadatas"]
+    dimension = len(collection.get(limit=1, include=["embeddings"])["embeddings"][0])
+    indice = {
+        "coleccion": collection.name,
+        "ruta": str(settings.chroma_dir),
+        "registros": total,
+        "dimension": dimension,
+        "espacio": "cosine",
+        "embedding_model": settings.embedding_model,
+        "metadatos": sorted({key for meta in metadatas for key in meta}),
+        "tipos": dict(sorted(Counter(meta.get("tipo") for meta in metadatas).items())),
+    }
+
+    data = collection.query(
+        query_embeddings=[Embedder(settings).embed_query(args.pregunta)],
+        n_results=min(args.k, total),
+        include=["documents", "metadatas", "distances", "embeddings"],
+    )
+
+    resultados = []
+    for chunk_id, text, meta, distance, embedding in zip(
+        data["ids"][0],
+        data["documents"][0],
+        data["metadatas"][0],
+        data["distances"][0],
+        data["embeddings"][0],
+        strict=False,
+    ):
+        meta = meta or {}
+        resultados.append(
+            {
+                "id": chunk_id,
+                "similitud": round(1.0 - float(distance), 4),
+                "pagina": meta.get("pagina"),
+                "pagina_fin": meta.get("pagina_fin"),
+                "seccion": meta.get("seccion"),
+                "seccion_corta": meta.get("seccion_corta"),
+                "tipo": meta.get("tipo"),
+                "campo": meta.get("campo"),
+                "vector": _preview_vector(embedding),
+                "fragmento": " ".join(str(text).split())[:300],
+            }
+        )
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "indice": indice,
+                    "pregunta": args.pregunta,
+                    "resultados": resultados,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    print("== índice ==")
+    print(f"colección : {indice['coleccion']}  ({indice['ruta']})")
+    print(f"registros : {indice['registros']}")
+    print(f"dimensión : {indice['dimension']}  (espacio {indice['espacio']})")
+    print(f"modelo    : {indice['embedding_model']}")
+    print(f"metadatos : {', '.join(indice['metadatos'])}")
+    print(f"tipos     : {' · '.join(f'{k}={v}' for k, v in indice['tipos'].items())}")
+
+    print(f"\n== consulta ==\n{args.pregunta}")
+    for position, result in enumerate(resultados, start=1):
+        vector = "" if args.sin_vector else (
+            f"  vec={result['vector']} … ({indice['dimension']}d)"
+        )
+        print(
+            f"\n[{position}] sim={result['similitud']:.4f} · "
+            f"p.{result['pagina']}-{result['pagina_fin']} · "
+            f"{result['seccion_corta'] or result['seccion']} · {result['tipo']}"
+            + (f" · {result['campo']}" if result["campo"] else "")
+        )
+        print(f"  id : {result['id']}{vector}")
+        print(f"  txt: {result['fragmento']}")
 
 
 def cmd_evaluar(args: argparse.Namespace) -> None:
@@ -187,6 +285,19 @@ def build_parser() -> argparse.ArgumentParser:
     buscar.add_argument("consulta")
     buscar.add_argument("-k", type=int, default=6)
     buscar.set_defaults(func=cmd_buscar)
+
+    inspeccionar = sub.add_parser(
+        "inspeccionar", help="Estructura del índice vectorial y vectores de una pregunta"
+    )
+    inspeccionar.add_argument("pregunta")
+    inspeccionar.add_argument("-k", type=int, default=5)
+    inspeccionar.add_argument("--json", action="store_true", help="Salida JSON")
+    inspeccionar.add_argument(
+        "--sin-vector",
+        action="store_true",
+        help="Oculta las primeras componentes del vector",
+    )
+    inspeccionar.set_defaults(func=cmd_inspeccionar)
 
     evaluar = sub.add_parser("evaluar", help="Mide Hit@k sobre un archivo JSONL")
     evaluar.add_argument("--archivo", default="eval/preguntas.jsonl")

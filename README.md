@@ -148,6 +148,7 @@ python -m nts_rag.cli indexar
 python -m nts_rag.cli consultar "¿Qué vacunas se aplican a gestantes?"
 python -m nts_rag.cli consultar --render "¿Qué consecuencias tiene una inyección no estéril?"
 python -m nts_rag.cli buscar "cadena de frío"
+python -m nts_rag.cli inspeccionar "dosis de la vacuna antineumocócica" -k 3
 python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl -k 5
 python -m nts_rag.cli servir --reload
 ```

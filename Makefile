@@ -10,7 +10,7 @@ CHUNKS := data/chunks/nts-246.chunks.jsonl
 DOCS := corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md \
         corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md
 
-.PHONY: install chunks index ingest serve test lint doctor docker-build docker-up docker-down clean-index
+.PHONY: install chunks index ingest serve test lint doctor docker-build docker-up docker-down clean-index inspeccionar
 
 install:
 	uv venv --python 3.12 .venv
@@ -40,6 +40,12 @@ lint:
 
 doctor:
 	$(PY) -m nts_rag.cli doctor
+
+# Inspecciona el índice vectorial y busca una pregunta.
+# Uso: make inspeccionar PREGUNTA="dosis de la antineumocócica" [K=3]
+inspeccionar:
+	@test -n "$(PREGUNTA)" || { echo 'Uso: make inspeccionar PREGUNTA="..." [K=3]'; exit 1; }
+	$(PY) -m nts_rag.cli inspeccionar "$(PREGUNTA)" $(if $(K),-k $(K),)
 
 docker-build:
 	docker compose build
