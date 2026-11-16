@@ -20,6 +20,32 @@
    defecto a la norma vigente**. La histórica solo entra con señal explícita.
 5. **Un solo reindexado** (esquema v2) que incluye: corpus 2022, etiquetas canónicas,
    filas de dominio, `vacuna_slug`, edades normalizadas y metadatos de documento.
+6. **El reindexado es obligatorio.** Ningún cambio de esquema se considera terminado
+   sin `make chunks && make index` y sin pasar los smoke tests de §10.
+7. Se añaden tres mejoras recomendadas: **expansión por sección** (§9, Fase 2),
+   **frescura del índice + corpus lint** e **IDs estables** (§9, Fase 1). El resto
+   (casos especiales, normalización numérica, contradicciones, API `/esquema`, CI,
+   log de consultas, re-ranker local) queda como **mejoras complementarias** en §9.
+
+---
+
+## 0.1 Mandato para quien implementa
+
+Este documento fija **objetivos y criterios de aceptación**, no una implementación
+cerrada. Quien lo reciba tiene margen para mejorar el diseño:
+
+- **Si encuentras una solución más adecuada** que la propuesta (otra estructura de
+  datos, otro algoritmo de fusión, otra forma de partir tablas, otro modelo de
+  embeddings), **aplícala**. No estás obligado a seguir la letra del plan.
+- Condiciones para desviarte: (a) los criterios de aceptación de §8.3 se cumplen o
+  mejoran; (b) mantienes las garantías de citación, abstención y "no consta";
+  (c) no reintroduces la dependencia de top-k para preguntas de comparación o de
+  edad; (d) documentas la decisión y el motivo en este archivo o en un ADR.
+- **Debes reindexar la base de datos** con el esquema v2 antes de dar nada por
+  terminado. Un cambio de código sin reindexado no es una entrega válida.
+- Verifica con el set de evaluación congelado (§8.1) y registra los números. No
+  ajustes el set para que pase.
+- Si una decisión de este documento resulta errónea, cámbiala y explica por qué.
 
 ---
 
@@ -441,6 +467,33 @@ tiene solo la remisión al Anexo 2.
 - Vacuna no mencionada → "no consta", sin sustituir.
 - Abstención: "no consta en la **norma vigente**", no un "no consta" absoluto.
 
+### D12 — Expansión por sección (recomendada)
+
+El top-k devuelve fragmentos, pero la unidad documental que necesita una respuesta es
+la **sección**: una ficha son 13 campos, el Anexo 2 son 13 filas, 6.3.3 son ~30
+filas. Tras recuperar, se cargan los chunks hermanos del mismo `seccion_numero`
+(con presupuesto de caracteres, dedup y orden por página).
+
+- Coste bajo y **no requiere reindexar**.
+- Corrige "me diste 1 campo de 13" y "media tabla".
+- Aceptación: ficha recuperada → 13/13 campos en el contexto.
+
+### D13 — Frescura del índice y corpus lint (recomendada)
+
+El manifiesto guarda `schema_version` y `fuentes: {ruta: sha256}`. `doctor` compara
+y avisa si el índice está desfasado. Además, `corpus_lint()` falla si una ficha no
+tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug.
+
+Razón: una respuesta plausible sobre un corpus viejo o incompleto es el peor error
+posible, y hoy nada lo detecta.
+
+### D14 — IDs estables (recomendada)
+
+El ID actual (`sha1(source | contexto | texto[:80])` + sufijo por orden) cambia si el
+OCR reordena filas, y rompe citas y evaluación. Se sustituye por
+`sha1(doc_id + seccion_numero + tipo + texto completo)`, con sufijo solo en duplicados
+reales. Se valida reindexando dos veces y comparando IDs.
+
 ---
 
 ## 7. Diseño objetivo
@@ -454,6 +507,7 @@ corpus/markdown/*.md (2022 + 2026)
   → filas de dominio (tipo=fila, campo=primera celda, vacuna_slug, edad_min/max)
   → edades normalizadas en tokens BM25 + metadata
   → Chroma (una colección, filtro por defecto vigencia=vigente)
+  → recuperación + expansión por sección (ficha/tabla completa)
   → router de intención
       ├─ lookup            → híbrido actual
       ├─ agregación edad    → filtro por rango de edad + filas
@@ -579,14 +633,19 @@ Comparaciones: 0/2, 1/2, 5/7, 0/3, 4/24 (ver §4.4–4.5).
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Baseline | recall@6 agregación | 0.29 |
-| Fase 1 (esquema v2) | recall@10 agregación | ≥ 0.80 |
+| Fase 1 | recall@10 agregación | ≥ 0.80 |
 | Fase 1 | 6.2.2 presente en toda pregunta por edad | 100% |
 | Fase 1 | lookups del eval | siguen 20/20 |
-| Fase 2 (router) | `contaminación` | **0** |
-| Fase 3 (matriz) | cobertura de conjunto nombrado | 2/2, 2/2 |
+| Fase 1 | índice fresco (hash de fuentes) | **0 desfases** |
+| Fase 1 | corpus lint (invariantes de §9) | **100%** |
+| Fase 1 | IDs estables (dos reindexados seguidos) | **idénticos** |
+| Fase 2 | `contaminación` | **0** |
+| Fase 2 | expansión de sección (ficha completa) | **13/13 campos** |
+| Fase 3 | cobertura de conjunto nombrado | 2/2, 2/2 |
 | Fase 3 | completitud global | 7/7, 3/3, 24/24 |
-| Fase 3 (diff) | precisión del diff | ≥ 0.90 |
+| Fase 3 | precisión del diff | ≥ 0.90 |
 | Fase 3 | nuevas/eliminadas | exacto (6 nuevas) |
+| Fase 3 | contradicciones detectadas (SPR) | **1/1 con ambas citas** |
 
 ### 8.4 Objetivo pospuesto explícitamente
 
@@ -616,22 +675,31 @@ a los puntos 1–4. Mejor un mapa explícito y pequeño que "pesos" implícitos.
 
 | Archivo | Cambio |
 |---|---|
-| `pipelines/ocr/md_to_vector.py` | Sin cambios funcionales; revisar `split_table` y `--table-max-chars`. El corte por filas vive en `index.py`. |
+| `pipelines/ocr/md_to_vector.py` | **IDs estables**: `sha1(doc_id + seccion_numero + tipo + texto completo)` y sufijo solo en duplicados reales (hoy usa `texto[:80]` + orden, lo que rompe citas y eval si el OCR reordena). Revisar `split_table` y `--table-max-chars`. El corte por filas vive en `index.py`. |
 | `src/nts_rag/config.py` | Registro `DOCUMENTS` (id, título, año, vigencia, páginas). Eliminar `DOC_TITLE` como fuente de verdad. `index_schema_version = 2`. |
-| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas; etiquetas canónicas + `campo_original`. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). |
+| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas; etiquetas canónicas + `campo_original`. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). **Manifiesto con `fuentes: {ruta: sha256}`** y `corpus_lint()` que falla si una ficha no tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug. |
 | `src/nts_rag/text.py` | Sacar `ano/anos` de stopwords (o sustituir por tokens de edad). `extract_ages`. Ampliar `QUERY_SYNONYMS` (rescate/recuperar/completar; anterior/antigua/2022/2026 con contexto). `FIELD_INDICATORS` → claves canónicas + `reaccion`, `adverso`, `secundario`, `postvacunal`. |
 | `src/nts_rag/schemas.py` | `Fuente.documento` real, `vigencia`; request `alcance` (`vigente`/`historica`/`ambas`). |
+| `src/nts_rag/cli.py` | `doctor` compara el `sha256` de los Markdown con el manifiesto y avisa si el índice está desfasado. |
 | `Makefile` | `DOCS` incluye `corpus/markdown/nts-n-196-minsa-digiesp-2022.md`. |
 
-**Un solo `make chunks && make index`.** Verificación en §10.
+**Reindexado obligatorio:** un solo `make chunks && make index`, ejecutado de verdad
+antes de cerrar la fase. Verificación en §10. Repetir el reindexado dos veces debe
+producir **los mismos IDs** (determinismo).
 
 ### Fase 2 — Recuperación
 
 | Archivo | Cambio |
 |---|---|
 | `retrieve.py` | `_where` con `vigencia=vigente` por defecto; filtros `vacuna_slug` y rango de edad; subir `vector_k`/`bm25_k` a ~40–50; dedup/MMR por `(seccion, campo)`; boost de campo con claves canónicas. |
+| `retrieve.py` (nuevo `expand_context`) | **Expansión por sección**: tras el top-k, cargar los chunks hermanos del mismo `seccion_numero` (ficha completa de 13 campos, tabla completa, 6.3.3 completo) con presupuesto de caracteres, dedup y orden por página. Corrige "me diste 1 campo de 13" y "media tabla" sin reindexar. |
 | `router.py` (nuevo) | Intención + alcance de versión + descomposición en subconsultas por oración y por "y"/"¿" (solo **entre** spans de entidades, ver §11). |
-| `answer.py` | Citas por documento (`[NTS 196-2022, p. 50]`); contexto multi-fuente; abstención "en la norma vigente". |
+| `answer.py` | Citas por documento (`[NTS 196-2022, p. 50]`); contexto multi-fuente (incluye la expansión de sección); abstención "en la norma vigente". |
+
+**Aceptación de la expansión:** si el top-k trae un campo de una ficha, el contexto
+final debe incluir los 13 campos de esa ficha; si trae una fila del Anexo 2, las
+filas de esa tabla presentes en el documento.
+
 
 ### Fase 3 — Matriz, comparación y diff
 
@@ -649,17 +717,44 @@ a los puntos 1–4. Mejor un mapa explícito y pequeño que "pesos" implícitos.
 - Reevaluar el modelo de embeddings (`bge-m3`/`multilingual-e5`) **solo si** tras
   Fase 1–3 sigue flojo; antes ocultaría el problema de chunking.
 
+### Mejoras complementarias (alto valor, no bloqueantes)
+
+No son necesarias para cerrar el caso guía, pero cubren puntos ciegos importantes.
+Se pueden reordenar o sustituir si el implementador encuentra algo mejor (§0.1).
+Detalle en el Anexo I.
+
+| Mejora | Qué resuelve | Coste | Fase | Aceptación |
+|---|---|---|---|---|
+| **Casos especiales como matriz** (6.3.x) | `condición × vacuna → conducta`; el caso guía pide contraindicación y uso simultáneo | Medio | 3 | 8 condiciones agrupadas; `vacuna_slug` lista + flag `comodin` |
+| **Simultaneidad** (Anexo 1) | "¿SPR y varicela el mismo día?" | Bajo | 3 | 1 matriz antígeno × intervalo |
+| **Normalización numérica/unidades** | `0,5 ml` vs `0.5 ml`; `+2 °C a +8 °C`; `4a11m29d` vs `5a` | Medio | 1/3 | 100% de dosis y temperaturas parseadas; diff sin falsos por puntuación |
+| **Detección de contradicciones** | SPR: 6.2.2 dice 5–11 años y Anexo 2 hasta 4a11m29d | Medio | 3 | conflicto marcado con ambas citas |
+| **`/esquema?edad=` + `datos` estructurado** | respuesta determinista del caso guía, sin depender del LLM | Medio | 3 | 60 meses → calendario + recuperables + no recuperables |
+| **Calibración de abstención** | negativas con vocabulario compartido (rotavirus a los 12 meses) | Bajo | 2/3 | 5/5 negativas se abstienen |
+| **CI + `uv.lock` + pre-commit** | reproducibilidad entre máquinas | Bajo | 4 | ruff + pytest en cada push |
+| **Log de consultas + feedback** | crecer el eval con fallos reales | Bajo | 4 | JSONL sin datos personales |
+| **Re-ranker cross-encoder local** | sustituir el re-rankeo por LLM (coste, JSON frágil) | Medio | 4 | iguala o mejora recall sin API |
+| **Auth** (bearer + CORS + rate limit) | exposición fuera de localhost | Bajo | 4 | solo si se despliega |
+
 ---
 
 ## 10. Verificación del reindexado (smoke tests)
+
+**El reindexado es obligatorio.** Estos checks se ejecutan sobre el índice v2 real,
+no sobre mocks.
 
 - total ≈ 1.965 ± 10%;
 - **100%** de chunks con `vigencia` y `documento_id`;
 - **0** etiquetas de campo fuera del catálogo de 13 (falla, no warning);
 - 18 fichas de 2022 y 24 de 2026;
+- manifiesto con `schema_version = 2` y `fuentes: {ruta: sha256}`;
+- `doctor` no reporta desfase entre Markdown y manifiesto;
+- **dos reindexados consecutivos producen los mismos IDs**;
+- `corpus_lint()` pasa al 100%;
 - ninguna fuente de 2022 citada como "NTS 246";
 - consulta sin señal de versión → **0** chunks de 2022 (test de contaminación);
 - "dosis de rescate BCG" → fila del Anexo 2 en top-5 (hoy puesto 13 BM25);
+- expansión de sección: una ficha recuperada trae **13/13** campos;
 - los 20 lookups del eval siguen 20/20.
 
 ---
@@ -686,20 +781,22 @@ a los puntos 1–4. Mejor un mapa explícito y pequeño que "pesos" implícitos.
 
 ## 12. Qué NO se ha hecho
 
-- No se ha modificado ningún archivo de código, datos, configuración ni tests.
+- No se ha modificado código, datos, configuración ni tests.
 - No se ha reindexado.
-- No se ha ingestado la NTS 196-2022.
+- No se ha ingestado la NTS 196-2022 en el índice.
 - No se ha cambiado el esquema de chunks ni las etiquetas.
-- El único cambio de esta iteración es **este documento**.
+- Las únicas modificaciones de esta iteración son **este documento**.
 
-Cambios ya presentes en el árbol de trabajo (ajenos a esta iteración, revisar antes
-de commitear):
+Ya en el repositorio (commits previos):
 
-- `Makefile`, `README.md`, `docs/COMANDOS.org`, `src/nts_rag/cli.py`: comando
-  `inspeccionar` (estructura del índice + vectores de una consulta).
-- Sin seguimiento: `corpus/markdown/nts-n-196-minsa-digiesp-2022.md`,
-  `corpus/pdf/nts-n-196-minsa-digiesp-2022.pdf`.
-- Basura local: `data/chunks/.#nts-246.chunks.jsonl` (lock de Emacs), no commitear.
+- `3bad6b5`: corpus de la NTS 196-2022 (`corpus/markdown/...2022.md` y
+  `corpus/pdf/...2022.pdf`).
+- `ad8a2e5`: comando `inspeccionar` (`Makefile`, `README.md`, `docs/COMANDOS.org`,
+  `src/nts_rag/cli.py`).
+- `7691649`: primera versión de este documento.
+
+El corpus 2022 está versionado pero **no indexado**: la ingesta en Chroma sigue
+pendiente y forma parte de la Fase 1.
 
 ---
 
@@ -907,6 +1004,14 @@ PY
    hay campo en esa versión?
 9. **Negativas**: validar que el sistema se abstiene y no devuelve un fragmento
    relacionado.
+10. **Alcance de la expansión por sección**: ¿siempre, o solo en intenciones de
+    agregación/comparación? (coste de contexto frente a completitud).
+11. **Corpus lint**: ¿falla el build o solo avisa? (recomendado: fallar en CI,
+    avisar en local).
+12. **IDs**: ¿hash del texto completo o de una versión normalizada? (el completo es
+    más simple; el normalizado es más estable ante cambios de formato).
+13. **Orden de las complementarias**: ¿casos especiales antes o después de la API
+    `/esquema`? El caso guía sugiere resolver antes los casos especiales.
 
 ## Anexo H — Glosario mínimo
 
@@ -917,3 +1022,102 @@ PY
 - **Global**: comparación por propiedad sin nombrar vacunas ("vivas atenuadas").
 - **Vigencia**: `vigente`/`derogada` por documento.
 - **Contaminación**: citar la norma histórica en una pregunta de la vigente.
+
+---
+
+## Anexo I — Notas para las mejoras complementarias
+
+Estas mejoras no cambian las decisiones D1–D11 ni el reindexado obligatorio. Se
+documentan aquí para que el implementador no tenga que redescubrir la estructura.
+
+### I.1 Casos especiales (6.3.1–6.3.4)
+
+Estructura observada en 6.3.3: 4 columnas
+(`POBLACIÓN OBJETIVO | EDAD | VACUNA | DOSIS Y VÍA DE ADMINISTRACIÓN`), ~30 filas,
+con la población y la edad **repetidas** en cada fila. La columna `VACUNA` no
+siempre contiene una vacuna:
+
+- "Influenza y las demás vacunas según esquema".
+- "Resto de Vacunas" → comodín, no una vacuna concreta.
+- "Según valoración médica" → conducta, no vacuna.
+
+Modelo propuesto:
+
+- entidad `condicion` + `edad` + lista de `(vacuna_slug, conducta)`;
+- condiciones detectadas: prematuro/bajo peso/VIH, contacto TB, hemodiálisis,
+  convivientes inmunodeprimidos, esplenectomizados, oncohematológicos, TPH y
+  trasplante de órganos sólidos;
+- `vacuna_slug` como **lista** en la metadata y flag `comodin` para "resto";
+- agrupar por `(condición, edad)` para no generar ~30 near-duplicates;
+- las celdas con `<br>` deben partirse en lista: `clean_text` los convierte en
+  espacios y pierde la estructura.
+
+Aceptación: "niño de 5 años esplenectomizado" devuelve sus vacunas y dosis con cita.
+
+### I.2 Simultaneidad (Anexo 1)
+
+Tabla de 5 columnas (`TIPOS DE ANTÍGENOS | VACUNAS | INTERVALO ENTRE DOSIS |
+OBSERVACIONES | PRECAUCIONES`). Es una matriz pequeña: vivos atenuados (intervalo
+mínimo de 1 mes si no se administran simultáneamente) frente a inactivados
+(cualquier intervalo). Responde "¿puedo poner SPR y varicela el mismo día?" y
+alimenta la parte de "uso simultáneo" del caso guía.
+
+### I.3 Normalización numérica y de unidades
+
+Casos observados: `0.5 ml`, `0,5 ml`, `0.5 ml,`, `1,5 ml`, `+2 °C a +8 °C`,
+`entre 2 y 8 °C`, `1,500g`, `4 años 11 meses 29 días`.
+
+Propuesta: `parse_value(text) -> {tipo: dosis|temperatura|edad|peso, valor o rango,
+unidad}` y guardar en metadata (`valor_num`, `unidad`) **solo cuando el parseo es
+inequívoco**; si no, dejarlo nulo y conservar el texto. Habilita filtros por rango
+y un diff sin ruido de puntuación.
+
+Ojo: `4a11m29d` = 59,97 meses ≠ `5 años`. El cálculo debe ser en meses/días.
+
+### I.4 Contradicciones entre fuentes
+
+Ejemplo verificado: **SPR**. 6.2.2 (p. 46) dice "5 a 11 años: dosis única… en zonas
+de brote"; Anexo 2 (p. 80) dice "hasta los 4 años 11 meses 29 días". No es un error
+de OCR: son fuentes distintas con alcance distinto.
+
+Regla: cuando dos fuentes del mismo documento dan valores distintos para el mismo
+`(vacuna_slug, campo)`, marcar `conflicto` y mostrar **ambas** con su cita. No
+resolver automáticamente. Añadir al eval una pregunta que exija las dos fuentes.
+
+### I.5 API `/esquema` y salida estructurada
+
+`POST /esquema {edad_meses, vacunado, condiciones[]}` →
+`{calendario[], recuperables[], no_recuperables[], casos_especiales[], advertencias[]}`
+con cita por ítem. Determinista: no usa el LLM salvo para redactar.
+
+En `/consulta`, añadir `datos` a la respuesta:
+
+```json
+{"filas": ["TIPO_DE_INMUNIZACION", "DOSIS"],
+ "columnas": ["pentavalente", "hexavalente"],
+ "celdas": [{"vacuna": "pentavalente", "campo": "DOSIS",
+             "valor": "0.5 ml", "pagina": 17,
+             "seccion": "6.1.1.4", "documento": "nts-246-2026"}]}
+```
+
+El Markdown es una vista; el JSON es el contrato para tests y UI.
+
+### I.6 Abstención por slots
+
+`is_answerable` es hoy solapamiento de términos. Propuesta: extraer slots
+(`vacuna`, `campo`, `edad`, `población`, `versión`) y comprobar que el conjunto
+recuperado los cubre. Sin ningún slot reconocible → abstenerse. Con slots pero sin
+cobertura → "no consta en la norma vigente". Evaluar con las 5 negativas actuales
+más las 3 nuevas.
+
+### I.7 Ingeniería y operación
+
+- **CI**: `.github/workflows/ci.yml` con `uv sync --dev`, `ruff check`, `pytest`.
+  El eval completo puede ser un job manual por la descarga del modelo.
+- **`uv.lock`**: fijar transitivas de `chromadb` y `fastembed`.
+- **pre-commit**: `ruff`.
+- **Log**: JSONL `{ts, consulta, ids, modo, abstención, latencia}`; script que
+  convierta fallos reales en candidatos de eval.
+- **Re-ranker local**: `TextCrossEncoder` de FastEmbed (p. ej.
+  `BAAI/bge-reranker-base`); medir contra el re-rankeo por LLM.
+- **Auth**: bearer + CORS + rate limit solo si la API sale de localhost.
