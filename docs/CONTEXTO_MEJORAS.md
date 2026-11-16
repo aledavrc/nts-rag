@@ -2,10 +2,11 @@
 
 > **Documento de traspaso.** Recoge el análisis completo, la evidencia medida y las
 > decisiones ya tomadas para la siguiente iteración del proyecto. La implementación
-> **no ha comenzado**: no se ha modificado código, datos ni configuración.
+> **ha comenzado**: se aplicaron las correcciones de §0.2 (código, tests e índice);
+> el esquema v2 de §9 sigue pendiente.
 >
-> Fecha: 2026-11-16 · Estado: análisis cerrado, claves canónicas aprobadas.
-> Siguiente paso: implementar el esquema v2 y el reindexado único (sección 9).
+> Fecha: 2026-11-16 · Estado: análisis cerrado, correcciones previas aplicadas.
+> Siguiente paso: Fase 0 y Fase 1 de §9 (esquema v2 y reindexado único).
 
 ## 0. TL;DR para el implementador
 
@@ -13,7 +14,8 @@
    sin vacunas) **no es del LLM**: es de recuperación y es estructural.
 2. La causa principal es que la **edad desaparece de la tokenización** (`año`, `años`,
    `niño`, `niña` son stopwords) y las **tablas que importan no se parten en filas**
-   (el field-chunking solo funciona con fichas de 2 columnas).
+   (el field-chunking solo funciona con tablas de 2 columnas; el caso todo-o-nada del
+   Anexo 2 ya se corrigió y produce 10 de 13 campos, ver §0.2).
 3. Se decide una **matriz determinista `vacuna × campo × versión`** en lugar de chunks
    agregados buscables. La comparación deja de ser una lotería de embeddings.
 4. Se ingesta también la **NTS 196-2022**, con `vigencia` por documento y **filtro por
@@ -46,6 +48,30 @@ cerrada. Quien lo reciba tiene margen para mejorar el diseño:
 - Verifica con el set de evaluación congelado (§8.1) y registra los números. No
   ajustes el set para que pase.
 - Si una decisión de este documento resulta errónea, cámbiala y explica por qué.
+
+---
+
+## 0.2 Estado de implementación (correcciones aplicadas tras el análisis)
+
+Antes de empezar las fases se corrigieron defectos detectados en una auditoría del
+código. No cambian las decisiones D1–D14 ni el reindexado obligatorio, pero sí el
+punto de partida: **el índice ya no tiene 994 chunks**.
+
+| Cambio | Efecto |
+|---|---|
+| `rag/formatting.py`: `+`/`*` solo abren viñeta si inician palabra | `+ 2° a + 8° C` ya no se parte: las temperaturas de conservación llegan intactas a la API, al modo extractivo y al contexto del LLM |
+| `index.py` `_kv_rows`: descarta el encabezado y salta filas no-campo (antes una fila anulaba la tabla) | Anexo 2 pasa de **0 a 10 campos** (BCG, PENTAVALENTE, HEXAVALENTE, IPV, APO, ROTAVIRUS, NEUMOCOCO, SPR, DPT, FIEBRE AMARILLA). Siguen sin campo `HvB`, `HvA` y `Varicela` |
+| `index.py` `build_index`: construye en `chroma.tmp` y cambia al final | un `make index` interrumpido ya no deja el índice anterior destruido |
+| `rag/retrieve.py` + `api.py`: `/salud` reporta `collection.count()` y marca `degradado` si no coincide con los chunks cargados; el `HEALTHCHECK` de Docker lo consulta | adelanta parte de D13: un índice parcial o desfasado ya no se anuncia como `ok` |
+| `rag/retrieve.py` `FIELD_INDICATORS`: se compara como stems | el boost de campo funciona para «dosis» y «efectos» |
+| `rag/answer.py`: un `httpx.Client` compartido; re-rankeo sin índices repetidos | menos latencia; el LLM no puede duplicar una fuente |
+| Tests de `/buscar` (200 y 503) y del estado de salud; `pipelines` incluido en `make lint`; `numpy` declarado | base para el CI de Fase 4 |
+| Reindexado local | **1.004 chunks** = 648 base + 356 campo; el JSONL sigue teniendo 648 registros (regenerarlo da un archivo idéntico) |
+
+Lo que **no** cambia: la edad sigue siendo stopword (causa 1 de §5), el pool sigue
+siendo 12 + 12 (causa 5 de §5), el Anexo 2 sigue siendo un chunk de tabla de 2.690
+caracteres además de sus 10 campos, la NTS 196 sigue sin indexar y el set de
+evaluación sigue siendo solo de lookup.
 
 ---
 
@@ -114,7 +140,7 @@ Puntos de entrada relevantes:
 | Dato | Valor |
 |---|---|
 | Colección | `nts_246` |
-| Chunks | **994** = 562 texto + 86 tabla + 346 campo |
+| Chunks | **1.004** = 562 texto + 86 tabla + 356 campo |
 | Documentos | Solo **NTS 246-2026** |
 | Modelo | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (FastEmbed/ONNX) |
 | JSONL de entrada | `data/chunks/nts-246.chunks.jsonl` (648 registros) |
@@ -145,7 +171,8 @@ Todo se midió en **solo lectura**, con scripts ad-hoc contra el índice existen
 Se midieron cinco dimensiones:
 
 1. **Tokenización** de la pregunta real (`tokenize` + `expand_tokens`).
-2. **Rango de los chunks correctos** en cada recuperador (BM25 y vectorial, sobre 994).
+2. **Rango de los chunks correctos** en cada recuperador (BM25 y vectorial, sobre el
+   índice actual de 1.004).
 3. **Cobertura** de la respuesta: ¿están todas las fuentes necesarias en top-k?
 4. **Comportamiento comparativo**: conjuntos nombrados y preguntas globales.
 5. **Estructura del corpus**: etiquetas, filas de tabla, fichas y numerales.
@@ -153,6 +180,11 @@ Se midieron cinco dimensiones:
 ---
 
 ## 4. Hallazgos con evidencia
+
+> Las mediciones de §4.1, §4.2, §4.6 y el Anexo D se rehicieron sobre el índice
+> actual (1.004 chunks). Las de §4.4–4.5 y §8.2 son del índice v1 (994): sus
+> conclusiones (una entidad gana, cobertura ≤ 1 de N) siguen vigentes, pero el top-5
+> exacto cambia entre reindexados porque HNSW es aproximado.
 
 ### 4.1 Caso guía: niño de 5 años sin vacunas previas
 
@@ -163,19 +195,19 @@ Pregunta:
 Tras `tokenize` + `expand_tokens` queda en:
 
 ```
-['5', 'debe', 'deben', 'no', 'previa', 'priorizar', 'recibido', 'recuperabl', 'tener']
+['5', 'debe', 'no', 'previa', 'priorizar', 'recibido', 'recuperabl', 'tener']
 ```
 
 La edad desaparece: `año/años` son stopwords y `niño` también. "5" solo no
 significa nada, y "no" es una de las palabras más frecuentes del corpus.
 
-Rango de las fuentes correctas (994 chunks):
+Rango de las fuentes correctas (1.004 chunks):
 
 | Chunk | Contenido | BM25 | Vectorial |
 |---|---|---|---|
-| `a1426dadea31de72` p.45 | **6.2.2 calendario 0–11 años** | **352** | **~690** |
-| `406d2c2e5d81d021` p.80 | **Anexo 2, tabla de rescate (13 filas)** | **107** | **285** |
-| `fdd64fa0a6b49ec4` p.47 | 6.2.3 adolescencia | 582 | 505 |
+| `a1426dadea31de72` p.45 | **6.2.2 calendario 0–11 años** | **354** | **709** |
+| `406d2c2e5d81d021` p.80 | **Anexo 2, tabla de rescate (13 filas)** | **109** | **260** |
+| `fdd64fa0a6b49ec4` p.47 | 6.2.3 adolescencia | 584 | 464 |
 
 El pool es de 12 + 12. **Ninguna entra, ni con k=20** (6.2.2 sigue ausente).
 
@@ -188,13 +220,14 @@ señuelo verosímil: peor que abstenerse.
 
 | Consulta | Anexo 2 (BM25) | Anexo 2 (vector) |
 |---|---|---|
-| "dosis de rescate" | 30 | 92 |
-| "esquemas de vacunación con dosis de rescate" | 20 | 297 |
-| "dosis de rescate BCG" | **13** | **18** |
+| "dosis de rescate" | 40 | 97 |
+| "esquemas de vacunación con dosis de rescate" | 30 | 298 |
+| "dosis de rescate BCG" (tabla completa) | 15 | 20 |
+| "dosis de rescate BCG" (**fila BCG**) | **1** | **5** |
 
-Con "dosis de rescate BCG" queda a **un puesto** de entrar en el pool de 12. Es el
-control que demuestra que el problema no es de vocabulario, sino de granularidad y
-de tamaño del pool.
+La tabla completa sigue fuera del pool de 12, pero desde §0.2 el **campo de la fila**
+(BCG del Anexo 2) sale primero en el híbrido. El control confirma que el problema era
+de granularidad, no de vocabulario: cuando la fila existe como chunk, se recupera.
 
 ### 4.3 Preguntas por edad: fallo total
 
@@ -235,7 +268,7 @@ Datos verificados:
 | Dato | 2022 | 2026 |
 |---|---|---|
 | Chunks base (`--table-max-chars 6000`) | 560 | 648 |
-| Chunks de campo | ~226–231 | 346 |
+| Chunks de campo | ~226–231 | 356 |
 | Fichas 6.1.1.x | **18** | **24** |
 | Anexo 2 (rescate) | **p. 50** | **p. 80** |
 | Calendario | 6.2.1 "<5 años" + 6.2.2 ">5 años" | 6.2.2 "0–11" + 6.2.3 adolescente + … |
@@ -285,14 +318,14 @@ Por eso "Hit@1 = 20/20" convive con un fallo total en el caso de uso real.
 | # | Causa | Evidencia | Impacto |
 |---|---|---|---|
 | 1 | La edad se borra en `tokenize` (stopwords `ano/anos/nino/nina`) y se aplica también al corpus | tokens de la pregunta = `['5', …]` | Toda pregunta por edad es irresoluble léxicamente |
-| 2 | `_kv_rows` es todo-o-nada: exige 2 columnas, etiquetas en MAYÚSCULA y **todas** las filas válidas | la fila `Varicela` (minúscula) anula el Anexo 2 completo | 0 chunks de campo para las 13 vacunas |
+| 2 | `_kv_rows` exige 2 columnas y etiquetas en MAYÚSCULA; **ya no es todo-o-nada** (§0.2) | `HvB`, `HvA` y `Varicela` (mixtas) se saltan; el resto se parte | **10 de 13** campos del Anexo 2; faltan 3 filas |
 | 3 | Solo se parten tablas de 2 columnas | 6.2.2 (3), 6.3.3 (4), Anexo 1 (5) quedan monolíticos | Los calendarios y casos especiales no son recuperables por fila |
-| 4 | Tablas grandes como un único chunk | Anexo 2 = 2.690 caracteres; embedding promedio de 13 vacunas | BM25 lo penaliza por longitud; el vector lo diluye |
-| 5 | Pool de 12+12 y `k*3` para el re-ranker | Anexo 2 en 107 (BM25) / 285 (vector) | El re-ranker no puede arreglar lo que no está en el pool |
+| 4 | Tablas grandes como un único chunk | Anexo 2 = 2.690 caracteres; el chunk tabla sigue siendo uno, con 10 campos al lado | BM25 penaliza la tabla; en 10 de 13 vacunas el campo por fila ya la resuelve |
+| 5 | Pool de 12+12 y `k*3` para el re-ranker | Anexo 2 en 109 (BM25) / 260 (vector) | El re-ranker no puede arreglar lo que no está en el pool |
 | 6 | Una sola consulta, sin descomposición | "priorizar" + "recuperables" + "5 años" compiten | Los 6 slots se llenan de variantes del mismo tema |
 | 7 | Sin eje de versión | 2022 no indexada; `DOC_TITLE` fijo | Comparativas imposibles; riesgo de citar norma derogada |
 | 8 | Evaluación solo de lookup | 20/20 con el caso real roto | El benchmark oculta el problema |
-| 9 | Las tablas de continuación de 1 fila se descartan | 2022 6.1.1.9: la fila `USO SIMULTÁNEO` vivía sola en la pág. 19; `_kv_rows` exige ≥3 filas y devuelve `None` | 1 campo perdido (41 en vez de 42) |
+| 9 | Las tablas de continuación de 1 fila se descartan | 2022 6.1.1.9: la fila `USO SIMULTÁNEO` vivía sola en la pág. 19; `_kv_rows` exige ≥3 filas **válidas** (ya no anula el resto de la tabla) | 1 campo perdido (41 en vez de 42); las demás filas de esa tabla ya no se pierden |
 
 ---
 
@@ -424,7 +457,7 @@ Se hace un único `chunks + index` que incluye todo. Estimación:
 | Filas de dominio (sin fichas) | ~180 |
 | **Total** | **~1.965** (±10%) |
 
-Hoy: 994 → **~2×**. Si se partieran todas las tablas: ~3.460 (3,5×), un tercio de
+Hoy: 1.004 → **~2×**. Si se partieran todas las tablas: ~3.460 (3,5×), un tercio de
 ruido operativo.
 
 El manifiesto guarda `schema_version`/`chunking_version`; `/salud` lo reporta y el
@@ -491,7 +524,12 @@ y avisa si el índice está desfasado. Además, `corpus_lint()` falla si una fic
 tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug.
 
 Razón: una respuesta plausible sobre un corpus viejo o incompleto es el peor error
-posible, y hoy nada lo detecta.
+posible, y hasta hace poco nada lo detectaba.
+
+**Parcial ya hecho (§0.2):** `/salud` compara `collection.count()` con los chunks
+cargados, marca `degradado` si no coinciden y el `HEALTHCHECK` de Docker falla;
+`build_index` escribe en `chroma.tmp` y cambia al final, así que un fallo no deja el
+índice a medias. Falta el hash de fuentes, `schema_version` y `corpus_lint()`.
 
 ### D14 — IDs estables (recomendada)
 
@@ -634,6 +672,10 @@ retrocompatible:
 
 Comparaciones: 0/2, 1/2, 5/7, 0/3, 4/24 (ver §4.4–4.5).
 
+Medido sobre el índice v1 (994). Tras §0.2 el caso guía sigue fuera del pool (§4.1)
+y el control «rescate BCG» ya entra por el campo de fila (§4.2); el resto de la
+tabla no se ha vuelto a medir, porque las fases 1–3 son las que deben moverla.
+
 ### 8.3 Umbrales por fase
 
 | Fase | Métrica | Objetivo |
@@ -683,8 +725,8 @@ a los puntos 1–4. Mejor un mapa explícito y pequeño que "pesos" implícitos.
 |---|---|
 | `pipelines/ocr/md_to_vector.py` | **IDs estables**: `sha1(doc_id + seccion_numero + tipo + texto completo)` y sufijo solo en duplicados reales (hoy usa `texto[:80]` + orden, lo que rompe citas y eval si el OCR reordena). Revisar `split_table` y `--table-max-chars`. El corte por filas vive en `index.py`. |
 | `src/nts_rag/config.py` | Registro `DOCUMENTS` (id, título, año, vigencia, páginas). Eliminar `DOC_TITLE` como fuente de verdad. `index_schema_version = 2`. |
-| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas **sin umbral de 3 filas** (acepta continuación de 1 fila); etiquetas canónicas + `campo_original`. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). **Manifiesto con `fuentes: {ruta: sha256}`** y `corpus_lint()` que falla si una ficha no tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug. |
-| `src/nts_rag/text.py` | Sacar `ano/anos` de stopwords (o sustituir por tokens de edad). `extract_ages`. Ampliar `QUERY_SYNONYMS` (rescate/recuperar/completar; anterior/antigua/2022/2026 con contexto). `FIELD_INDICATORS` → claves canónicas + `reaccion`, `adverso`, `secundario`, `postvacunal`. |
+| `src/nts_rag/index.py` | `normalize_record`: resolver documento desde `source`/`doc_title`, añadir `documento_id`, `version`, `vigencia`, `vacuna_slug`, `schema_version`. `_kv_rows` → parser de N columnas **sin umbral de 3 filas** (acepta continuación de 1 fila); etiquetas canónicas + `campo_original`. El todo-o-nada ya está corregido (§0.2); falta N columnas y quitar el umbral. `expand_row_chunks` para filas de dominio (`tipo=fila`) y edades (`edad_min/max`). **Manifiesto con `fuentes: {ruta: sha256}`** y `corpus_lint()` que falla si una ficha no tiene los campos núcleo, una fila no tiene página o un Anexo 2 no mapea a slug. |
+| `src/nts_rag/text.py` | Sacar `ano/anos` de stopwords (o sustituir por tokens de edad). `extract_ages`. Ampliar `QUERY_SYNONYMS` (rescate/recuperar/completar; anterior/antigua/2022/2026 con contexto). `FIELD_INDICATORS` → claves canónicas + `reaccion`, `adverso`, `secundario`, `postvacunal` (ya se comparan como stems desde §0.2). |
 | `src/nts_rag/schemas.py` | `Fuente.documento` real, `vigencia`; request `alcance` (`vigente`/`historica`/`ambas`). |
 | `src/nts_rag/cli.py` | `doctor` compara el `sha256` de los Markdown con el manifiesto y avisa si el índice está desfasado. |
 | `Makefile` | `DOCS` incluye `corpus/markdown/nts-n-196-minsa-digiesp-2022.md`. |
@@ -759,7 +801,8 @@ no sobre mocks.
 - `corpus_lint()` pasa al 100%;
 - ninguna fuente de 2022 citada como "NTS 246";
 - consulta sin señal de versión → **0** chunks de 2022 (test de contaminación);
-- "dosis de rescate BCG" → fila del Anexo 2 en top-5 (hoy puesto 13 BM25);
+- "dosis de rescate BCG" → fila del Anexo 2 en top-5 (**ya se cumple**: campo `BCG`
+  en BM25 1 / vector 5);
 - expansión de sección: una ficha recuperada trae **13/13** campos;
 - los 20 lookups del eval siguen 20/20.
 
@@ -770,7 +813,7 @@ no sobre mocks.
 | Riesgo | Detalle | Mitigación |
 |---|---|---|
 | **Partir por "y"** | "Difteria **y** tétanos" es *una* vacuna (6.1.1.5/16); "Sarampión **y** rubeola" es *una* (6.1.1.12); "Sarampión, paperas **y** rubeola" es otra (6.1.1.11) | Detectar primero spans de vacunas conocidas y separar **entre** spans, nunca dentro |
-| **Tablas de continuación de 1 fila** | `_kv_rows` exige ≥3 filas; una fila suelta tras un salto de página se pierde (caso 2022 6.1.1.9, `USO SIMULTÁNEO`) | Aceptar tablas de 1+ filas o fusionar continuaciones en el chunker (`Tabla completada con…`) |
+| **Tablas de continuación de 1 fila** | `_kv_rows` exige ≥3 filas; una fila suelta tras un salto de página se pierde (caso 2022 6.1.1.9, `USO SIMULTÁNEO`). Desde §0.2 ya no anula el resto de la tabla, pero la fila suelta sigue sin campo | Aceptar tablas de 1+ filas o fusionar continuaciones en el chunker (`Tabla completada con…`) |
 | **`previa` como señal de versión** | "vacunas previas" = dosis anteriores | Solo `norma/versión previa`; nunca suelta |
 | **DT pediátrico vs dT adulto vs DPT** | 6.1.1.5 vs 6.1.1.16 vs 6.1.1.15 | Alias con calificador de edad; match exacto de sigla primero |
 | **Numerales colisionan entre normas** | 2022 6.2.2 = ">5 años"; 2026 6.2.2 = "0–11" | Alinear por `vacuna_slug`, no por numeral |
@@ -786,13 +829,24 @@ no sobre mocks.
 
 ---
 
-## 12. Qué NO se ha hecho
+## 12. Qué queda pendiente
 
-- No se ha modificado código, datos, configuración ni tests.
-- No se ha reindexado.
-- No se ha ingestado la NTS 196-2022 en el índice.
-- No se ha cambiado el esquema de chunks ni las etiquetas.
-- Las únicas modificaciones de esta iteración son **este documento**.
+Aplicado ya (detalle en §0.2): formato de temperaturas, arranque del índice en
+`chroma.tmp`, salud que detecta índice desfasado, filas válidas del Anexo 2, boost de
+campo con stems, tests de API, cliente HTTP compartido, lint de `pipelines` y `numpy`
+declarado. El índice se reindexó: **994 → 1.004 chunks**.
+
+**Sigue pendiente** (Fases 0–4 de §9):
+
+- Ingestar la NTS 196-2022 y añadir el eje de versión/vigencia.
+- Cambiar el esquema de chunks: `vacuna_slug`, `campo_original`, filas de dominio,
+  edades normalizadas y las 13 claves canónicas.
+- `_kv_rows` de N columnas y sin umbral de 3 filas (hoy ya no anula el resto de la
+  tabla, pero sigue exigiendo 2 columnas y 3 filas válidas).
+- Expansión por sección, router de intención, matriz de fichas y diff.
+- Manifiesto con `schema_version` y `fuentes: sha256` + `corpus_lint()`.
+- Nuevo set de evaluación (`eval/agregacion.jsonl`) y métricas por tipo.
+- Reevaluar el modelo de embeddings (no se ha tocado).
 
 Ya en el repositorio (commits previos):
 
@@ -887,16 +941,17 @@ Trampas de alias: `dt_pediatrico` (6.1.1.5) vs `dt_adulto` (6.1.1.16) vs `dpt`
 
 ## Anexo D — Baseline de recuperación
 
-Medido con `n_results=994`, `k=12/12`, modelo actual. "Rango" = posición en el
-recuperador (1 = mejor).
+Medido con `n_results=collection.count()` (1.004), `k=12/12`, modelo actual sobre el
+índice tras §0.2. "Rango" = posición en el recuperador (1 = mejor).
 
 | Consulta | Objetivo | BM25 | Vector |
 |---|---|---|---|
-| Pregunta guía | Anexo 2 (p80) | 107 | 285 |
-| Pregunta guía | 6.2.2 (p45) | 352 | ~690 |
-| "dosis de rescate" | Anexo 2 | 30 | 92 |
-| "dosis de rescate BCG" | Anexo 2 | 13 | 18 |
-| "esquemas de vacunación con dosis de rescate" | Anexo 2 | 20 | 297 |
+| Pregunta guía | Anexo 2 (p80) | 109 | 260 |
+| Pregunta guía | 6.2.2 (p45) | 354 | 709 |
+| "dosis de rescate" | Anexo 2 (tabla) | 40 | 97 |
+| "dosis de rescate BCG" | Anexo 2 (tabla) | 15 | 20 |
+| "dosis de rescate BCG" | **fila BCG** (`406d…-campo-1`) | **1** | **5** |
+| "esquemas de vacunación con dosis de rescate" | Anexo 2 (tabla) | 30 | 298 |
 
 ## Anexo E — Comandos de reproducción
 
@@ -909,7 +964,8 @@ cd /home/rcaled/Projects/own/nts-rag
 # 2) Tokenización de la pregunta guía
 .venv/bin/python - <<'PY'
 from nts_rag.text import tokenize, expand_tokens
-q = "¿Qué vacunas debe tener un niño de 5 años que no ha recibido vacunas previas?"
+q = ("¿Qué vacunas debe tener un niño de 5 años que no ha recibido vacunas previas? "
+     "¿Qué se debe priorizar, qué es recuperable y qué no?")
 print(sorted(expand_tokens(set(tokenize(q)))))
 PY
 
@@ -919,19 +975,20 @@ from nts_rag.config import get_settings
 from nts_rag.rag.retrieve import Retriever
 from nts_rag.text import tokenize, expand_tokens
 s = get_settings(); r = Retriever(s)
-q = "¿Qué vacunas debe tener un niño de 5 años que no ha recibido vacunas previas?"
+q = ("¿Qué vacunas debe tener un niño de 5 años que no ha recibido vacunas previas? "
+     "¿Qué se debe priorizar, qué es recuperable y qué no?")
 tok = list(expand_tokens(set(tokenize(q))))
 sc = r.bm25.get_scores(tok)
 order = sorted(range(len(sc)), key=lambda i: sc[i], reverse=True)
 pos = {r.chunks[i]["id"]: k for k, i in enumerate(order, 1)}
 emb = r.embedder.embed_query(q)
-v = r.collection.query(query_embeddings=[emb], n_results=994, include=["metadatas"])
+v = r.collection.query(query_embeddings=[emb], n_results=r.collection.count(), include=["metadatas"])
 vpos = {cid: k for k, cid in enumerate(v["ids"][0], 1)}
 for target, label in [("406d2c2e5d81d021", "Anexo 2"), ("a1426dadea31de72", "6.2.2")]:
     print(label, "bm25=", pos.get(target), "vec=", vpos.get(target))
 PY
 
-# 4) Por qué el Anexo 2 no se parte en campos
+# 4) Qué filas del Anexo 2 se parten en campos (10 de 13)
 .venv/bin/python - <<'PY'
 from nts_rag.config import get_settings
 from nts_rag.rag.retrieve import Retriever
