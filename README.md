@@ -48,7 +48,7 @@ Los filtros de la API permiten acotar por sección, página o tipo de fragmento.
 |---|---|
 | Documento | NTS N° 246-MINSA/DGIESP-2026 |
 | Páginas | 140 (97 + 43) con numeración impresa continua |
-| Chunks | 994 (648 base + 346 campos de ficha) |
+| Chunks | 1004 (648 base + 356 campos de ficha) |
 | Entrada | `data/chunks/nts-246.chunks.jsonl` |
 
 Cada chunk ya contiene `section`, `section_number`, `pages`, `type`, `text` y
@@ -64,7 +64,6 @@ Docker.
 cp .env.example .env
 make install       # crea .venv e instala dependencias
 make doctor        # comprueba qué falta
-make index         # construye el índice desde los chunks
 make serve         # API en http://127.0.0.1:8000
 ```
 
@@ -73,11 +72,11 @@ Sin `make`:
 ```bash
 uv venv --python 3.12 .venv
 uv pip install -e ".[dev]"
-.venv/bin/python -m nts_rag.cli indexar
 .venv/bin/python -m nts_rag.cli servir --reload
 ```
 
-El modelo de embeddings se descarga la primera vez que se indexa.
+El índice (`data/index/`) está versionado: no hace falta construirlo para
+consultar. El modelo de embeddings se descarga la primera vez que se consulta.
 
 ### Regenerar los chunks
 
@@ -85,8 +84,11 @@ Solo es necesario si cambian los Markdown:
 
 ```bash
 make chunks        # ejecuta pipelines/ocr/md_to_vector.py
-make index
+make index         # reconstruye data/index/
 ```
+
+Al cambiar chunks o índice, commitea `data/chunks/`, `data/index/` y
+`data/manifest.json`: los contribuidores consultan sin reindexar.
 
 ## API
 
@@ -185,13 +187,14 @@ La imagen solo contiene la API, ChromaDB y el modelo de embeddings. No incluye
 herramientas de OCR ni Docling.
 
 ```bash
-make index                 # en local, una vez
 docker compose up --build -d
 ```
 
 `docker-compose.yml` monta `./data/index` y `./data/chunks` (este último en solo lectura).
-Si el índice no existe, `/salud` (o `/health`) responde `degradado` y las consultas devuelven
-503.
+El índice versionado se monta tal cual; reconstruye con `make index` solo si cambias los
+chunks. Si el índice no existe o no coincide con los chunks (por ejemplo, tras
+`make chunks` sin `make index`), `/salud` (o `/health`) responde `degradado`; sin índice,
+las consultas devuelven 503.
 
 ## Estructura
 
@@ -202,9 +205,9 @@ nts-rag/
 │   └── pdf/                      # PDF escaneados originales
 ├── data/
 │   ├── chunks/                   # chunks para el índice (versionados)
-│   ├── index/                    # ChromaDB generada (ignorada)
+│   ├── index/                    # ChromaDB del corpus (versionada)
 │   ├── work/                     # intermedios de OCR (ignorados)
-│   └── manifest.json             # metadatos del índice (ignorado)
+│   └── manifest.json             # metadatos del índice (versionado)
 ├── docs/
 │   ├── PROCESO.md                # decisiones y verificaciones del OCR
 │   └── COMANDOS.org              # recetario de pruebas de API/CLI

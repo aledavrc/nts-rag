@@ -6,10 +6,10 @@ __pycache__/
 .env
 pipelines/ocr/config.json
 
-# Artefactos generados (el corpus y los chunks sí se versionan)
-data/index/
-data/manifest.json
+# Artefactos generados (el corpus, los chunks y el índice sí se versionan)
 data/work/
+
+# Caché de FastEmbed: se descarga sola en la primera consulta
 models/
 
 # Cobertura y tipado

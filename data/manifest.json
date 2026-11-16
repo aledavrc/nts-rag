@@ -1,0 +1,8 @@
+{
+  "documento": "NTS N° 246-MINSA/DGIESP-2026",
+  "generado_en": "2026-11-16T14:33:18.192445+00:00",
+  "chunks": 1004,
+  "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "coleccion": "nts_246",
+  "origen": "data/chunks/nts-246.chunks.jsonl"
+}
