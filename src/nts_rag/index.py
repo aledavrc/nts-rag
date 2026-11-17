@@ -1,21 +1,42 @@
 from __future__ import annotations
 
+import gc
+import hashlib
 import json
 import re
 import shutil
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import chromadb
 
-from nts_rag.config import DOC_TITLE, Settings
+from nts_rag.catalogo import (
+    CANONICAL_FIELDS,
+    FICHA_HEADERS,
+    FICHAS,
+    NO_APLICA,
+    canonical_fields,
+    detect_vaccines,
+    ficha_slug,
+    is_domain_section,
+)
+from nts_rag.config import (
+    DOCUMENTS,
+    INDEX_SCHEMA_VERSION,
+    Settings,
+    document_for_source,
+)
 from nts_rag.rag.embeddings import Embedder
-from nts_rag.text import short_section
+from nts_rag.text import age_limit_months, age_range_months, normalize_for_match, short_section
 
-# Campos que se guardan como metadatos en ChromaDB.
+# Campos que se guardan como metadatos en ChromaDB (esquema v2, §6.2).
 META_FIELDS = (
+    "documento_id",
     "documento",
+    "version",
+    "vigencia",
     "pagina",
     "pagina_fin",
     "seccion",
@@ -23,17 +44,31 @@ META_FIELDS = (
     "seccion_numero",
     "tipo",
     "campo",
+    "campo_original",
+    "vacuna_slug",
+    "vacunas",
+    "edad_min_meses",
+    "edad_max_meses",
     "fuente",
     "parte",
     "parte_total",
 )
 
+TIPOS = ("texto", "tabla", "campo", "fila")
+
 _SEPARATOR_RE = re.compile(r"^\|[\s:\-|]+\|$")
 _LABEL_RE = re.compile(r"^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s\/().,:°'0-9\-]+$")
+_FICHA_NUMBER_RE = re.compile(r"^6\.1\.1\.\d+$")
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
 
 
 def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Unifica un registro del JSONL o de ChromaDB en un chunk interno."""
+    """Unifica un registro del JSONL o de ChromaDB en un chunk interno (v2)."""
 
     section = str(record.get("section") or record.get("seccion") or "")
     pages = record.get("pages") or []
@@ -51,6 +86,8 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
         tipo = "tabla"
     elif raw_type in {"campo", "field"}:
         tipo = "campo"
+    elif raw_type in {"fila", "row"}:
+        tipo = "fila"
     else:
         tipo = "texto"
 
@@ -59,19 +96,33 @@ def normalize_record(record: dict[str, Any]) -> dict[str, Any]:
     if not embed_text:
         embed_text = f"{section}\n{text}".strip()
 
+    fuente = str(record.get("source") or record.get("fuente") or "")
+    doc = DOCUMENTS.get(str(record.get("documento_id") or "")) or document_for_source(fuente)
+    seccion_numero = str(record.get("section_number") or record.get("seccion_numero") or "")
+
     return {
         "id": str(record.get("id") or ""),
         "texto": text,
         "embed_text": embed_text,
-        "documento": str(record.get("documento") or DOC_TITLE),
+        "documento_id": doc.id,
+        "documento": doc.titulo,
+        "version": doc.version,
+        "vigencia": str(record.get("vigencia") or doc.vigencia),
         "pagina": start,
         "pagina_fin": end,
         "seccion": section,
         "seccion_corta": str(record.get("seccion_corta") or short_section(section)),
-        "seccion_numero": str(record.get("section_number") or record.get("seccion_numero") or ""),
+        "seccion_numero": seccion_numero,
         "tipo": tipo,
         "campo": str(record.get("campo") or ""),
-        "fuente": str(record.get("source") or record.get("fuente") or ""),
+        "campo_original": str(record.get("campo_original") or ""),
+        "vacuna_slug": str(
+            record.get("vacuna_slug") or ficha_slug(doc.id, seccion_numero) or ""
+        ),
+        "vacunas": str(record.get("vacunas") or ""),
+        "edad_min_meses": _optional_int(record.get("edad_min_meses")),
+        "edad_max_meses": _optional_int(record.get("edad_max_meses")),
+        "fuente": fuente,
         "parte": int(record.get("part") or record.get("parte") or 0),
         "parte_total": int(record.get("parts") or record.get("parte_total") or 1),
     }
@@ -84,15 +135,11 @@ def load_chunks(path: Path) -> list[dict[str, Any]]:
             line = line.strip()
             if line:
                 chunks.append(normalize_record(json.loads(line)))
-    return expand_field_chunks(_unique_ids(chunks))
+    return _unique_ids(expand_row_chunks(expand_field_chunks(_unique_ids(chunks))))
 
 
 def _unique_ids(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Evita IDs repetidos: md_to_vector corta el hash a los primeros 80 chars.
-
-    Dos partes de una misma tabla comparten encabezado y, por tanto, hash. El
-    sufijo mantiene el ID estable para un mismo archivo de chunks.
-    """
+    """Sufijo solo para duplicados reales, en orden de aparición (D14)."""
 
     seen: dict[str, int] = {}
     for chunk in chunks:
@@ -113,72 +160,144 @@ def _split_cells(line: str) -> list[str]:
     return [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped)]
 
 
+def _table_lines(text: str) -> list[str]:
+    return [
+        line
+        for line in text.splitlines()
+        if line.lstrip().startswith("|") and not _SEPARATOR_RE.match(line.strip())
+    ]
+
+
 def _is_label(value: str) -> bool:
     return bool(_LABEL_RE.match(value)) and len(value) >= 3
 
 
-def _kv_rows(text: str) -> list[tuple[str, str]] | None:
-    """Detecta una ficha key-value (tabla de 2 columnas con etiquetas en MAYÚSCULA).
+def is_ficha(chunk: dict[str, Any]) -> bool:
+    number = chunk.get("seccion_numero") or ""
+    return bool(_FICHA_NUMBER_RE.match(number)) and number in FICHAS.get(
+        chunk.get("documento_id") or "", {}
+    )
 
-    Las fichas 6.1.1.x tienen forma `| TIPO DE VACUNA | ... |`. Se descarta el
-    encabezado y se parten las filas que parecen un campo; así una fila suelta
-    (p. ej. `HvB` en el Anexo 2) no anula el resto. Las matrices de varias
-    columnas siguen sin partirse.
+
+def ficha_rows(text: str) -> list[tuple[str, str]]:
+    """Filas `etiqueta → valor` de una tabla de ficha 6.1.1.x.
+
+    Acepta N columnas (el valor une el resto de celdas) y cualquier número de
+    filas, incluida la continuación de una sola fila en la página siguiente
+    (causa raíz 9). Se descarta el encabezado `Característica`; una fila sin
+    etiqueta continúa el valor de la anterior.
     """
 
-    lines = [line for line in text.splitlines() if line.lstrip().startswith("|")]
-    if len(lines) < 3:
-        return None
-    non_sep = [line for line in lines if not _SEPARATOR_RE.match(line)]
-    if not non_sep:
-        return None
-
     rows: list[tuple[str, str]] = []
-    for line in non_sep[1:]:
+    for line in _table_lines(text):
         cells = _split_cells(line)
-        if len(cells) == 2 and _is_label(cells[0]) and cells[1]:
-            rows.append((cells[0], cells[1]))
-    if len(rows) < 3:
-        return None
+        if not cells:
+            continue
+        label, rest = cells[0], [cell for cell in cells[1:] if cell]
+        if normalize_for_match(label) in FICHA_HEADERS:
+            continue
+        value = " ".join(rest)
+        if not label and rows and value:
+            previous_label, previous_value = rows[-1]
+            rows[-1] = (previous_label, f"{previous_value} {value}".strip())
+        elif _is_label(label) and value:
+            rows.append((label, value))
     return rows
 
 
-def _field_chunk(base: dict[str, Any], label: str, value: str, index: int) -> dict[str, Any]:
-    texto = f"**{label}**\n\n{value}".strip()
+def _field_chunk(
+    base: dict[str, Any], canonical: str, label: str, value: str
+) -> dict[str, Any]:
     return {
-        "id": f"{base['id']}-campo-{index}",
-        "texto": texto,
+        **base,
+        "id": f"{base['id']}-{canonical.lower()}",
+        "texto": f"**{label}**\n\n{value}".strip(),
         "embed_text": f"{base['seccion_corta']} — {label}\n{value}",
-        "documento": base["documento"],
-        "pagina": base["pagina"],
-        "pagina_fin": base["pagina_fin"],
-        "seccion": base["seccion"],
-        "seccion_corta": base["seccion_corta"],
-        "seccion_numero": base["seccion_numero"],
         "tipo": "campo",
-        "campo": label,
-        "fuente": base["fuente"],
-        "parte": base["parte"],
-        "parte_total": base["parte_total"],
+        "campo": canonical,
+        "campo_original": label,
     }
 
 
 def expand_field_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Añade un chunk por campo de las fichas key-value, sin quitar la tabla.
+    """Añade un chunk por campo canónico de las fichas, sin quitar la tabla.
 
-    El chunk de campo es corto y su `embed_text` lleva la sección y la etiqueta,
-    lo que hace que una pregunta como "composición de la antineumocócica" acierte
-    con el campo exacto en lugar de recuperar la ficha entera.
+    Solo se parten las fichas 6.1.1.x del catálogo: el resto de tablas de dos
+    columnas (p. ej. el Anexo 2) se parte en filas (`expand_row_chunks`). Una
+    etiqueta fuera del catálogo no genera campo; la detecta `corpus_lint`.
     """
 
     out: list[dict[str, Any]] = []
     for chunk in chunks:
         out.append(chunk)
-        if chunk["tipo"] == "tabla":
-            rows = _kv_rows(chunk["texto"])
-            if rows:
-                for index, (label, value) in enumerate(rows, start=1):
-                    out.append(_field_chunk(chunk, label, value, index))
+        if chunk["tipo"] != "tabla" or not is_ficha(chunk):
+            continue
+        for label, value in ficha_rows(chunk["texto"]):
+            for canonical in canonical_fields(label):
+                out.append(_field_chunk(chunk, canonical, label, value))
+    return out
+
+
+def _row_chunk(
+    base: dict[str, Any],
+    header: list[str],
+    cells: list[str],
+    header_line: str,
+    line: str,
+    index: int,
+) -> dict[str, Any]:
+    pairs = [
+        f"{name}: {value}" if name else value
+        for name, value in zip(header, cells, strict=False)
+        if value
+    ]
+    row_text = " ".join(cell for cell in cells if cell)
+    vacunas = detect_vaccines(row_text)
+    # Si la primera celda nombra una sola vacuna (Anexo 2: "| DPT | … |"), es la
+    # vacuna de la fila aunque el resto mencione otras.
+    first = detect_vaccines(cells[0]) if cells else []
+    if len(first) == 1:
+        vacunas = [first[0], *[slug for slug in vacunas if slug != first[0]]]
+    edades = age_range_months(cells[0]) if cells else None
+    edad_min, edad_max = edades if edades else (None, age_limit_months(row_text))
+    separator = "|" + "|".join(" --- " for _ in header) + "|"
+    return {
+        **base,
+        "id": f"{base['id']}-fila-{index}",
+        "texto": "\n".join([header_line, separator, line]),
+        "embed_text": f"{base['seccion_corta']}\n" + "; ".join(pairs),
+        "tipo": "fila",
+        "campo": "",
+        "campo_original": "",
+        "vacuna_slug": vacunas[0] if len(vacunas) == 1 or len(first) == 1 else "",
+        "vacunas": ",".join(vacunas),
+        "edad_min_meses": edad_min,
+        "edad_max_meses": edad_max,
+    }
+
+
+def expand_row_chunks(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Añade un chunk por fila de las tablas de dominio (D2), sin quitar la tabla.
+
+    Cada fila lleva el encabezado para leerse sola, y sus vacunas y edades
+    normalizadas. Las tablas operativas (presupuesto, registros) no se parten.
+    """
+
+    out: list[dict[str, Any]] = []
+    for chunk in chunks:
+        out.append(chunk)
+        if chunk["tipo"] != "tabla" or is_ficha(chunk):
+            continue
+        if not is_domain_section(chunk["seccion"], chunk["seccion_numero"]):
+            continue
+        lines = _table_lines(chunk["texto"])
+        if len(lines) < 2:
+            continue
+        header = _split_cells(lines[0])
+        for index, line in enumerate(lines[1:], start=1):
+            cells = _split_cells(line)
+            if any(cells):
+                out.append(_row_chunk(chunk, header, cells, lines[0], line, index))
     return out
 
 
@@ -202,6 +321,109 @@ def _metadata(chunk: dict[str, Any]) -> dict[str, str | int | float | bool]:
     return metadata
 
 
+def corpus_lint(chunks: list[dict[str, Any]]) -> list[str]:
+    """Errores estructurales del corpus indexado (D13). Lista vacía = 100%.
+
+    Comprueba metadatos de documento, que estén todas las fichas del Anexo A con
+    sus 13 campos (salvo los `NO_APLICA`), que ninguna etiqueta de ficha quede
+    fuera del catálogo y que todas las páginas de cada norma estén cubiertas.
+    """
+
+    errors: list[str] = []
+    for chunk in chunks:
+        if chunk.get("documento_id") not in DOCUMENTS or not chunk.get("vigencia"):
+            errors.append(f"{chunk['id']}: sin documento_id o vigencia")
+        if chunk.get("tipo") not in TIPOS:
+            errors.append(f"{chunk['id']}: tipo desconocido {chunk.get('tipo')!r}")
+
+    for doc in DOCUMENTS.values():
+        own = [chunk for chunk in chunks if chunk.get("documento_id") == doc.id]
+        if not own:
+            continue
+        pages: set[int] = set()
+        for chunk in own:
+            pages.update(range(chunk["pagina"], chunk["pagina_fin"] + 1))
+        missing = sorted(set(range(1, doc.paginas + 1)) - pages)
+        if missing:
+            errors.append(f"{doc.id}: páginas sin chunks {missing}")
+        outside = sorted(page for page in pages if page < 1 or page > doc.paginas)
+        if outside:
+            errors.append(f"{doc.id}: páginas fuera de rango {outside}")
+
+        for number, slug in FICHAS.get(doc.id, {}).items():
+            tables = [
+                c for c in own if c["tipo"] == "tabla" and c["seccion_numero"] == number
+            ]
+            if not tables:
+                errors.append(f"{doc.id} {number} ({slug}): ficha ausente")
+                continue
+            for table in tables:
+                for label, _ in ficha_rows(table["texto"]):
+                    if not canonical_fields(label):
+                        errors.append(f"{doc.id} {number}: etiqueta fuera del catálogo {label!r}")
+            present = {
+                c["campo"] for c in own if c["tipo"] == "campo" and c["seccion_numero"] == number
+            }
+            expected = {
+                field for field in CANONICAL_FIELDS if slug not in NO_APLICA.get(field, set())
+            }
+            if expected - present:
+                errors.append(
+                    f"{doc.id} {number} ({slug}): faltan campos {sorted(expected - present)}"
+                )
+    return errors
+
+
+def _sha256(path: Path) -> str:
+    """Hash del contenido con saltos de línea normalizados a LF.
+
+    Git puede guardar LF y extraer CRLF (core.autocrlf en Windows): sin
+    normalizar, el mismo corpus daría hashes distintos según la máquina.
+    """
+
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def source_paths(settings: Settings) -> list[Path]:
+    """Archivos de los que depende el índice: Markdown del registro + chunks."""
+
+    paths = [settings.corpus_dir / name for doc in DOCUMENTS.values() for name in doc.fuentes]
+    return [*paths, settings.chunks_path]
+
+
+def source_hashes(settings: Settings) -> dict[str, str]:
+    return {path.as_posix(): _sha256(path) for path in source_paths(settings) if path.exists()}
+
+
+def read_manifest(settings: Settings) -> dict[str, Any] | None:
+    if not settings.manifest_path.exists():
+        return None
+    return json.loads(settings.manifest_path.read_text(encoding="utf-8"))
+
+
+def freshness_problems(settings: Settings) -> list[str]:
+    """Desfases entre el manifiesto del índice y los archivos actuales (D13)."""
+
+    manifest = read_manifest(settings)
+    if manifest is None:
+        return ["no hay manifiesto: ejecuta `make index`"]
+    problems: list[str] = []
+    if manifest.get("schema_version") != INDEX_SCHEMA_VERSION:
+        problems.append(
+            f"schema_version {manifest.get('schema_version')} ≠ {INDEX_SCHEMA_VERSION}: reindexa"
+        )
+    recorded = manifest.get("fuentes") or {}
+    current = source_hashes(settings)
+    for path in sorted(set(recorded) | set(current)):
+        if path not in current:
+            problems.append(f"{path}: falta el archivo")
+        elif path not in recorded:
+            problems.append(f"{path}: no está en el manifiesto")
+        elif recorded[path] != current[path]:
+            problems.append(f"{path}: cambió desde el último índice")
+    return problems
+
+
 def get_collection(settings: Settings, *, reset: bool = False, path: Path | None = None):
     path = path or settings.chroma_dir
     if reset:
@@ -215,11 +437,73 @@ def get_collection(settings: Settings, *, reset: bool = False, path: Path | None
     )
 
 
+def _release_chroma() -> None:
+    """Cierra los clientes de Chroma en caché: en Windows retienen chroma.sqlite3
+    abierto y el directorio no se puede renombrar."""
+
+    try:
+        from chromadb.api.client import SharedSystemClient
+
+        SharedSystemClient.clear_system_cache()
+    except Exception:  # noqa: BLE001 - API interna; sin ella basta con gc
+        pass
+    gc.collect()
+
+
+def _swap_index(new: Path, current: Path) -> None:
+    """Sustituye el índice sin dejar nunca el directorio vacío.
+
+    El anterior se aparta a `<nombre>.old` antes de mover el nuevo; si el
+    movimiento falla, se restaura.
+    """
+
+    backup = current.with_name(f"{current.name}.old")
+    shutil.rmtree(backup, ignore_errors=True)
+    if current.exists():
+        current.rename(backup)
+    try:
+        new.rename(current)
+    except OSError:
+        if backup.exists() and not current.exists():
+            backup.rename(current)
+        raise
+    shutil.rmtree(backup, ignore_errors=True)
+
+
+def build_manifest(settings: Settings, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    por_documento = Counter(chunk["documento_id"] for chunk in chunks)
+    return {
+        "schema_version": INDEX_SCHEMA_VERSION,
+        "generado_en": datetime.now(UTC).isoformat(),
+        "chunks": len(chunks),
+        "tipos": dict(sorted(Counter(chunk["tipo"] for chunk in chunks).items())),
+        "documentos": [
+            {
+                "id": doc.id,
+                "titulo": doc.titulo,
+                "version": doc.version,
+                "vigencia": doc.vigencia,
+                "chunks": por_documento.get(doc.id, 0),
+            }
+            for doc in DOCUMENTS.values()
+        ],
+        "embedding_model": settings.embedding_model,
+        "coleccion": settings.chroma_collection,
+        "origen": settings.chunks_path.as_posix(),
+        "fuentes": source_hashes(settings),
+    }
+
+
 def build_index(settings: Settings, *, reset: bool = True) -> int:
     settings.ensure_dirs()
     chunks = load_chunks(settings.chunks_path)
     if not chunks:
         raise ValueError(f"No hay chunks en {settings.chunks_path}")
+
+    errors = corpus_lint(chunks)
+    for error in errors:
+        print(f"[lint] {error}")
+    print(f"[lint] {'OK' if not errors else f'{len(errors)} problemas'}")
 
     # Se construye aparte y se cambia al final: si falla a mitad, el índice
     # anterior sigue sirviendo.
@@ -240,19 +524,12 @@ def build_index(settings: Settings, *, reset: bool = True) -> int:
         print(f"[index] {min(start + batch_size, len(chunks))}/{len(chunks)}")
 
     if target is not None:
-        shutil.rmtree(settings.chroma_dir, ignore_errors=True)
-        target.rename(settings.chroma_dir)
+        del collection
+        _release_chroma()
+        _swap_index(target, settings.chroma_dir)
 
-    manifest = {
-        "documento": DOC_TITLE,
-        "generado_en": datetime.now(UTC).isoformat(),
-        "chunks": len(chunks),
-        "embedding_model": settings.embedding_model,
-        "coleccion": settings.chroma_collection,
-        "origen": str(settings.chunks_path),
-    }
     settings.manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2),
+        json.dumps(build_manifest(settings, chunks), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     print(f"[index] listo: {len(chunks)} chunks en {settings.chroma_dir}")

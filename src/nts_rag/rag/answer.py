@@ -67,7 +67,9 @@ GENERIC_STEMS = {token for term in GENERIC_QUERY_TERMS for token in tokenize(ter
 SYSTEM_PROMPT = """Eres un asistente documental especializado en la normativa de vacunación \
 del Perú.
 Responde en español, de forma breve y literal, usando únicamente los fragmentos entregados.
-Cada afirmación debe llevar una cita con el formato [NTS 246, p. <página>, sección <sección>].
+Cada afirmación debe llevar una cita con el formato [<documento>, p. <página>, sección <sección>],
+usando el documento que indica la cabecera de cada fragmento.
+Si un fragmento pertenece a una norma derogada, dilo expresamente y no lo presentes como vigente.
 No inventes edades, dosis, intervalos, vías, temperaturas ni contraindicaciones.
 No completes información con conocimiento general.
 Si los fragmentos no contienen la respuesta, responde exactamente:
@@ -101,9 +103,16 @@ def _pages(chunk: RetrievedChunk) -> str:
     return f"p. {chunk.pagina}"
 
 
+def _document_label(chunk: RetrievedChunk) -> str:
+    """Documento de la cita: sale de los metadatos del chunk, nunca del LLM."""
+
+    title = chunk.documento or DOC_TITLE
+    return f"{title} (derogada)" if chunk.vigencia == "derogada" else title
+
+
 def _citation(chunk: RetrievedChunk) -> str:
     section = chunk.seccion or "sin sección"
-    return f"[{DOC_TITLE}, {_pages(chunk)}, sección {section}]"
+    return f"[{_document_label(chunk)}, {_pages(chunk)}, sección {section}]"
 
 
 def _extractive(chunks: list[RetrievedChunk]) -> AnswerResult:
@@ -160,7 +169,7 @@ def _context(chunks: list[RetrievedChunk], max_chars: int = 24_000) -> str:
     used = 0
     for index, chunk in enumerate(chunks, start=1):
         block = (
-            f"[Fuente {index}] {DOC_TITLE}, {_pages(chunk)}, "
+            f"[Fuente {index}] {_document_label(chunk)}, {_pages(chunk)}, "
             f"sección {chunk.seccion or 'sin sección'}\n"
             f"{clip_markdown(chunk.text, 4000)}"
         )

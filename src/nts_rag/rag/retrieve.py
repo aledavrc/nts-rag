@@ -7,10 +7,10 @@ from typing import Any
 import chromadb
 from rank_bm25 import BM25Okapi
 
-from nts_rag.config import Settings
+from nts_rag.config import VIGENCIAS, Settings
 from nts_rag.index import load_chunks, load_from_collection
 from nts_rag.rag.embeddings import Embedder
-from nts_rag.text import expand_tokens, normalize_for_match, stem, tokenize
+from nts_rag.text import detect_vigencias, expand_tokens, normalize_for_match, stem, tokenize
 
 # Palabras que aparecen en casi todos los títulos y no distinguen secciones.
 SECTION_GENERIC = {
@@ -95,6 +95,23 @@ class RetrievedChunk:
         value = self.metadata.get("campo")
         return str(value) if value else None
 
+    @property
+    def campo_original(self) -> str | None:
+        value = self.metadata.get("campo_original")
+        return str(value) if value else None
+
+    @property
+    def documento(self) -> str:
+        return str(self.metadata.get("documento") or "")
+
+    @property
+    def documento_id(self) -> str:
+        return str(self.metadata.get("documento_id") or "")
+
+    @property
+    def vigencia(self) -> str:
+        return str(self.metadata.get("vigencia") or "vigente")
+
 
 def section_number_in_query(number: str, query: str) -> bool:
     """Comprueba que el numeral citado no sea prefijo de otro (6.1.1.1 vs 6.1.1.17)."""
@@ -104,10 +121,32 @@ def section_number_in_query(number: str, query: str) -> bool:
     return bool(re.search(rf"(?<![\d.]){re.escape(number)}(?![\d.])", query))
 
 
-def _where(filtros: Any) -> dict | None:
-    if filtros is None:
-        return None
+def resolve_vigencias(query: str, filtros: Any = None) -> tuple[str, ...]:
+    """Normas a consultar: el filtro explícito manda; si no, las señales de la pregunta.
+
+    Sin señal de versión solo se consulta la norma vigente (D6/D7): la histórica
+    nunca se mezcla en silencio con la respuesta.
+    """
+
+    vigencia = getattr(filtros, "vigencia", None)
+    if vigencia == "todas":
+        return VIGENCIAS
+    if vigencia:
+        return (vigencia,)
+    if getattr(filtros, "documento", None):
+        return VIGENCIAS
+    return detect_vigencias(query)
+
+
+def _where(filtros: Any, vigencias: tuple[str, ...] | None = None) -> dict | None:
     conditions: list[dict] = []
+    if vigencias and set(vigencias) != set(VIGENCIAS):
+        if len(vigencias) == 1:
+            conditions.append({"vigencia": {"$eq": vigencias[0]}})
+        else:
+            conditions.append({"vigencia": {"$in": list(vigencias)}})
+    if getattr(filtros, "documento", None):
+        conditions.append({"documento_id": {"$eq": filtros.documento}})
     if getattr(filtros, "tipo", None):
         conditions.append({"tipo": {"$eq": filtros.tipo}})
     if getattr(filtros, "pagina", None):
@@ -145,7 +184,8 @@ class Retriever:
         self, query: str, *, k: int | None = None, filtros: Any = None
     ) -> list[RetrievedChunk]:
         k = k or self.settings.top_k
-        where = _where(filtros)
+        vigencias = resolve_vigencias(query, filtros)
+        where = _where(filtros, vigencias)
         query_embedding = self.embedder.embed_query(query)
         query_tokens = expand_tokens(set(tokenize(query)))
         query_section_tokens = query_tokens - SECTION_GENERIC
@@ -173,7 +213,7 @@ class Retriever:
                 vector["metadatas"][0],
                 strict=False,
             ):
-                if not self._matches(metadata or {}, filtros):
+                if not self._matches(metadata or {}, filtros, vigencias):
                     continue
                 vector_ranked.append(chunk_id)
                 candidates[chunk_id] = RetrievedChunk(
@@ -192,7 +232,7 @@ class Retriever:
                 if score <= 0:
                     break
                 chunk = self.chunks[index]
-                if not self._matches(chunk, filtros):
+                if not self._matches(chunk, filtros, vigencias):
                     continue
                 chunk_id = chunk["id"]
                 bm25_ranked.append(chunk_id)
@@ -222,7 +262,10 @@ class Retriever:
             # texto completos son mejores, así que se atenúan.
             if item.tipo == "campo":
                 item.rrf -= 0.03
-                if field_named and item.campo and query_tokens & set(tokenize(item.campo)):
+                # La clave canónica (VIA_Y_SITIO) y la etiqueta original ("VÍA Y
+                # SITIO DE ADMINISTRACIÓN") cuentan las dos para nombrar el campo.
+                field_tokens = set(tokenize(f"{item.campo or ''} {item.campo_original or ''}"))
+                if field_named and query_tokens & field_tokens:
                     item.rrf += 0.08
             if query_tokens:
                 section_tokens = set(tokenize(item.seccion)) - SECTION_GENERIC
@@ -245,9 +288,16 @@ class Retriever:
         return ranked
 
     @staticmethod
-    def _matches(chunk: dict[str, Any], filtros: Any) -> bool:
+    def _matches(
+        chunk: dict[str, Any], filtros: Any, vigencias: tuple[str, ...] | None = None
+    ) -> bool:
+        if vigencias and (chunk.get("vigencia") or "vigente") not in vigencias:
+            return False
         if filtros is None:
             return True
+        documento = getattr(filtros, "documento", None)
+        if documento and chunk.get("documento_id") != documento:
+            return False
         if getattr(filtros, "tipo", None) and chunk.get("tipo") != filtros.tipo:
             return False
         if getattr(filtros, "seccion", None):

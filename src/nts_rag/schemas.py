@@ -10,7 +10,11 @@ class Filtros(BaseModel):
 
     seccion: str | None = None
     pagina: int | None = Field(default=None, ge=1)
-    tipo: Literal["texto", "tabla", "campo"] | None = None
+    tipo: Literal["texto", "tabla", "campo", "fila"] | None = None
+    # Documento exacto (`nts-246-2026`, `nts-196-2022`). Sin él, la vigencia decide.
+    documento: Literal["nts-246-2026", "nts-196-2022"] | None = None
+    # Sin valor: solo la norma vigente, salvo que la pregunta nombre otra versión.
+    vigencia: Literal["vigente", "derogada", "todas"] | None = None
 
 
 class ConsultaRequest(BaseModel):
@@ -32,12 +36,17 @@ class BusquedaRequest(BaseModel):
 class Fuente(BaseModel):
     chunk_id: str
     documento: str
+    documento_id: str | None = None
+    version: int | None = None
+    vigencia: str | None = None
     pagina: int
     pagina_fin: int
     seccion: str
     seccion_numero: str | None = None
     tipo: str
     campo: str | None = None
+    campo_original: str | None = None
+    vacuna_slug: str | None = None
     fragmento: str
     score: float
 

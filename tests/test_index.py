@@ -4,7 +4,9 @@ import nts_rag.index as index_mod
 from nts_rag.config import Settings
 from nts_rag.index import (
     build_index,
+    corpus_lint,
     expand_field_chunks,
+    expand_row_chunks,
     load_chunks,
     normalize_record,
 )
@@ -99,12 +101,13 @@ def _ficha(**overrides):
     return normalize_record(record)
 
 
-def test_expand_ficha_into_field_chunks():
+def test_expand_ficha_into_canonical_field_chunks():
     chunks = expand_field_chunks([_ficha()])
 
     assert [c["tipo"] for c in chunks] == ["tabla", "campo", "campo", "campo"]
     campos = [c for c in chunks if c["tipo"] == "campo"]
-    assert [c["campo"] for c in campos] == [
+    assert [c["campo"] for c in campos] == ["TIPO_DE_INMUNIZACION", "COMPOSICION", "DOSIS"]
+    assert [c["campo_original"] for c in campos] == [
         "TIPO DE VACUNA",
         "COMPOSICIÓN",
         "DOSIS (CANTIDAD)",
@@ -113,6 +116,55 @@ def test_expand_ficha_into_field_chunks():
     assert comp["embed_text"].startswith("6.1.1.10. VACUNA ANTINEUMOCÓCICA — COMPOSICIÓN")
     assert comp["texto"].startswith("**COMPOSICIÓN**")
     assert comp["seccion_numero"] == "6.1.1.10"
+    assert comp["vacuna_slug"] == "neumococo"
+    assert comp["id"] == "f1-composicion"
+
+
+def test_record_gets_document_metadata_from_its_source():
+    current = _ficha(source="8265031-nts-n-246-minsa-digiesp-2026-parte-1.md")
+    old = _ficha(source="nts-n-196-minsa-digiesp-2022.md", section_number="6.1.1.9")
+
+    assert (current["documento_id"], current["vigencia"], current["version"]) == (
+        "nts-246-2026",
+        "vigente",
+        2026,
+    )
+    assert (old["documento_id"], old["vigencia"], old["version"]) == (
+        "nts-196-2022",
+        "derogada",
+        2022,
+    )
+    # Mismo numeral, otra vacuna: la ficha se alinea por slug, no por numeral.
+    assert old["vacuna_slug"] == "neumococo"
+    assert _ficha(source="nts-n-196-minsa-digiesp-2022.md")["vacuna_slug"] == "spr"
+
+
+def test_combined_label_maps_to_two_canonical_fields():
+    table = _ficha(
+        text="| Característica | Descripción |\n| --- | --- |\n"
+        "| ESQUEMA DE VACUNACIÓN Y DOSIS | 2 dosis de 0.5 ml |"
+    )
+    campos = [c["campo"] for c in expand_field_chunks([table]) if c["tipo"] == "campo"]
+    assert campos == ["ESQUEMA_DE_VACUNACION", "DOSIS"]
+
+
+def test_one_row_continuation_of_a_ficha_is_a_field():
+    # La continuación en la página siguiente trae una sola fila y sin encabezado.
+    table = _ficha(
+        text="| USO SIMULTÁNEO CON OTRAS VACUNAS | Puede administrarse |\n| --- | --- |"
+    )
+    campos = [c["campo"] for c in expand_field_chunks([table]) if c["tipo"] == "campo"]
+    assert campos == ["USO_SIMULTANEO"]
+
+
+def test_unknown_ficha_label_is_reported_by_lint():
+    table = _ficha(
+        source="8265031-nts-n-246-minsa-digiesp-2026-parte-1.md",
+        text="| Característica | Descripción |\n| --- | --- |\n| PRECIO | 10 soles |",
+    )
+    errors = corpus_lint(expand_field_chunks([table]))
+    assert any("etiqueta fuera del catálogo 'PRECIO'" in error for error in errors)
+    assert any("6.1.1.1 (bcg): ficha ausente" in error for error in errors)
 
 
 def test_does_not_expand_matrix_table():
@@ -131,17 +183,58 @@ def test_does_not_expand_mixed_case_two_columns():
     assert expand_field_chunks([table]) == [table]
 
 
-def test_expands_the_rows_that_look_like_fields():
-    table = _ficha(
-        text="| VACUNA | PRECISIONES |\n"
-        "|---|---|\n"
-        "| BCG | dosis |\n"
-        "| HvB | dosis |\n"
-        "| IPV | dosis |\n"
-        "| DPT | dosis |"
+def _anexo2(**overrides):
+    record = {
+        "id": "a2",
+        "source": "8265031-nts-n-246-minsa-digiesp-2026-parte-1.md",
+        "section": "NTS > ANEXO 2 > ESQUEMAS DE VACUNACIÓN CON DOSIS DE RESCATE",
+        "section_number": "",
+        "pages": [80],
+        "type": "table",
+        "text": (
+            "| VACUNA | PRECISIONES |\n"
+            "|---|---|\n"
+            "| BCG | Después de 1 año hasta los 4 años 11 meses 29 días |\n"
+            "| ROTAVIRUS | Inicia desde la captación hasta los 8 meses 0 días. |\n"
+            "| DPT | Refuerzo; si no recibió Hexavalente |"
+        ),
+    }
+    record.update(overrides)
+    return normalize_record(record)
+
+
+def test_domain_table_is_split_into_rows_not_fields():
+    chunks = expand_row_chunks(expand_field_chunks([_anexo2()]))
+
+    assert [c["tipo"] for c in chunks] == ["tabla", "fila", "fila", "fila"]
+    bcg, rotavirus, dpt = chunks[1:]
+    assert bcg["id"] == "a2-fila-1"
+    assert bcg["texto"].splitlines()[0] == "| VACUNA | PRECISIONES |"
+    assert bcg["embed_text"].endswith("VACUNA: BCG; PRECISIONES: Después de 1 año hasta los "
+                                      "4 años 11 meses 29 días")
+    assert (bcg["vacuna_slug"], bcg["edad_max_meses"]) == ("bcg", 59)
+    assert (rotavirus["vacuna_slug"], rotavirus["edad_max_meses"]) == ("rotavirus", 8)
+    # La primera celda decide la vacuna aunque la fila nombre otra.
+    assert dpt["vacuna_slug"] == "dpt"
+    assert dpt["vacunas"] == "dpt,hexavalente"
+
+
+def test_operational_table_is_not_split():
+    table = _anexo2(section="NTS > ANEXO 20 > PROGRAMACIÓN PRESUPUESTAL")
+    assert expand_row_chunks([table]) == [table]
+
+
+def test_calendar_rows_carry_age_range():
+    table = _anexo2(
+        section="NTS > VI > 6.2.2. ESQUEMA DE VACUNACIÓN DEL NIÑO",
+        section_number="6.2.2",
+        text="| EDAD | TIPO DE VACUNA | DOSIS |\n|---|---|---|\n"
+        "| 5 a 11 años | Vacuna SR/SPR | Dosis única |",
     )
-    campos = [c["campo"] for c in expand_field_chunks([table]) if c["tipo"] == "campo"]
-    assert campos == ["BCG", "IPV", "DPT"]
+    row = expand_row_chunks([table])[1]
+    assert (row["edad_min_meses"], row["edad_max_meses"]) == (60, 143)
+    assert row["vacunas"] == "sr,spr"
+    assert row["vacuna_slug"] == ""
 
 
 def test_failed_build_keeps_the_previous_index(tmp_path, monkeypatch):

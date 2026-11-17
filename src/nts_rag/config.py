@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -8,6 +9,59 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DOC_ID = "nts-246-2026"
 DOC_TITLE = "NTS N° 246-MINSA/DGIESP-2026"
+
+# Versión del esquema de chunks/metadatos del índice. Cambiarla obliga a reindexar.
+INDEX_SCHEMA_VERSION = 2
+
+
+@dataclass(frozen=True)
+class DocumentInfo:
+    """Una norma del corpus. `fuentes` son los Markdown auditados que la componen."""
+
+    id: str
+    titulo: str
+    version: int
+    vigencia: str  # "vigente" | "derogada"
+    paginas: int
+    fuentes: tuple[str, ...]
+
+
+DOCUMENTS: dict[str, DocumentInfo] = {
+    doc.id: doc
+    for doc in (
+        DocumentInfo(
+            id="nts-246-2026",
+            titulo=DOC_TITLE,
+            version=2026,
+            vigencia="vigente",
+            paginas=140,
+            fuentes=(
+                "8265031-nts-n-246-minsa-digiesp-2026-parte-1.md",
+                "8265031-nts-n-246-minsa-digiesp-2026-parte-2.md",
+            ),
+        ),
+        DocumentInfo(
+            id="nts-196-2022",
+            titulo="NTS N° 196-MINSA/DGIESP-2022",
+            version=2022,
+            vigencia="derogada",
+            paginas=103,
+            fuentes=("nts-n-196-minsa-digiesp-2022.md",),
+        ),
+    )
+}
+
+VIGENCIAS = ("vigente", "derogada")
+
+
+def document_for_source(source: str) -> DocumentInfo:
+    """Documento al que pertenece un Markdown; sin coincidencia, la norma vigente."""
+
+    name = Path(source).name if source else ""
+    for doc in DOCUMENTS.values():
+        if name in doc.fuentes:
+            return doc
+    return DOCUMENTS[DOC_ID]
 
 
 class Settings(BaseSettings):
@@ -25,6 +79,8 @@ class Settings(BaseSettings):
 
     data_dir: Path = Path("data")
     models_dir: Path = Path("models")
+    # Markdown auditados: se usan para los hashes de frescura del manifiesto.
+    corpus_dir: Path = Path("corpus/markdown")
 
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     chroma_collection: str = "nts_246"

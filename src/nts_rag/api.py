@@ -57,12 +57,17 @@ def _fuente(chunk) -> Fuente:
     return Fuente(
         chunk_id=chunk.id,
         documento=chunk.metadata.get("documento", DOC_TITLE),
+        documento_id=chunk.metadata.get("documento_id"),
+        version=chunk.metadata.get("version"),
+        vigencia=chunk.metadata.get("vigencia"),
         pagina=chunk.pagina,
         pagina_fin=chunk.pagina_fin,
         seccion=chunk.seccion,
         seccion_numero=chunk.seccion_numero or None,
         tipo=chunk.tipo,
         campo=chunk.campo,
+        campo_original=chunk.campo_original,
+        vacuna_slug=chunk.metadata.get("vacuna_slug") or None,
         fragmento=clip_markdown(chunk.text, 1200),
         score=chunk.score,
     )

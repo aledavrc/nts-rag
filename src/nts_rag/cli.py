@@ -14,7 +14,13 @@ from nts_rag.evaluation import (
     summarize,
     summarize_by_type,
 )
-from nts_rag.index import build_index, get_collection
+from nts_rag.index import (
+    build_index,
+    corpus_lint,
+    freshness_problems,
+    get_collection,
+    load_chunks,
+)
 from nts_rag.rag.answer import NO_ANSWER, run_query
 from nts_rag.rag.embeddings import Embedder
 from nts_rag.rag.retrieve import Retriever
@@ -284,6 +290,17 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         settings.chunks_path.exists(),
         "make chunks",
     )
+
+    print("\nFrescura del índice (hashes del manifiesto):")
+    problems = freshness_problems(settings)
+    check("Índice al día con el corpus y los chunks", not problems, "make chunks && make index")
+    for problem in problems:
+        print(f"        · {problem}")
+    if settings.chunks_path.exists():
+        errors = corpus_lint(load_chunks(settings.chunks_path))
+        check("corpus_lint (fichas, campos y páginas)", not errors, "revisa los Markdown")
+        for error in errors[:10]:
+            print(f"        · {error}")
 
     if chroma_ready:
         print("\nListo para consultar: make serve (el modelo se descarga en la primera consulta)")

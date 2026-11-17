@@ -7,8 +7,11 @@ endif
 
 PY ?= $(VENV_PY)
 CHUNKS := data/chunks/nts-246.chunks.jsonl
+# Un solo índice con las dos normas; la vigencia de cada chunk sale del registro
+# DOCUMENTS de src/nts_rag/config.py.
 DOCS := corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md \
-        corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md
+        corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md \
+        corpus/markdown/nts-n-196-minsa-digiesp-2022.md
 
 .PHONY: install chunks index ingest serve test lint doctor docker-build docker-up docker-down clean-index inspeccionar
 

@@ -172,7 +172,14 @@ def parse_blocks(path, include_preamble=False):
         if m:
             pages = parse_pages(m.group(1))
             seen_page = True
-            if "continuación de la tabla" in line.lower() and last_table is not None:
+            # "continuación de la tabla …" / "continuación del listado …": la
+            # página continúa la última tabla aunque no traiga filas propias.
+            lowered = line.lower()
+            continues = any(
+                marker in lowered
+                for marker in ("continuación de la tabla", "continuación del listado")
+            )
+            if continues and last_table is not None:
                 last_table["pages"] = sorted(set(last_table["pages"]) | set(pages))
             current_pages = pages
             i += 1
@@ -387,10 +394,20 @@ def make_chunks_for_file(
                 })
 
     out = []
+    seen = {}
     for c in chunks:
         context = c["_context"]
         embed = (context + "\n" + c["text"]) if context else c["text"]
-        h = hashlib.sha1(f"{source}|{context}|{c['text'][:80]}".encode()).hexdigest()[:16]
+        # ID estable: depende del documento, la sección, el tipo y el texto
+        # completo (no de los primeros 80 caracteres), así que dos partes de una
+        # tabla con el mismo encabezado no colisionan. Solo un duplicado exacto
+        # recibe sufijo, en orden de aparición.
+        key = f"{source}|{c['_section']}|{c['type']}|{c['text']}"
+        h = hashlib.sha1(key.encode()).hexdigest()[:16]
+        count = seen.get(h, 0)
+        seen[h] = count + 1
+        if count:
+            h = f"{h}-{count + 1}"
         rec = {
             "id": h,
             "source": source,
