@@ -206,14 +206,17 @@ def age_range_months(text: str) -> tuple[int | None, int | None] | None:
 
 _HISTORIC_RE = re.compile(
     r"\b2022\b|\b196\b|\bderogada\b|"
-    r"\b(?:norma|nts|version|esquema)s? (?:anterior|antigua|previa|pasada)\b"
+    r"\b(?:normas?|normativas?|nts|versiones?|esquemas?) (?:anterior|antigua|previa|pasada)\b"
 )
-_CURRENT_RE = re.compile(r"\b2026\b|\b246\b|\bvigente\b|\b(?:norma|nts|version) actual\b")
+_CURRENT_RE = re.compile(
+    r"\b2026\b|\b246\b|\bvigente\b|\b(?:normas?|normativas?|nts|versiones?) actual(?:es)?\b"
+)
 # "antes" y "previa" sueltos no cuentan: "vacunas previas" o "antes de vacunar"
 # no hablan de otra norma (§12, trampas).
 _COMPARE_RE = re.compile(
     r"\bcompar|\bcambi(?:o|aron|os|ado)\b|\bdiferencia|"
-    r"\bvacunas? nuevas?\b|\bnuevas? vacunas?\b|\bincorpora|\bversus\b|\bvs\b"
+    r"\bvacunas? nuevas?\b|\bnuevas? vacunas?\b|\bincorpora|\bversus\b|\bvs\b|"
+    r"\bya no (?:estan|figuran|aparecen)\b|\bdej(?:o|aron) de (?:estar|figurar)\b"
 )
 
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from nts_rag.catalogo import NO_APLICA
 from nts_rag.rag.fichas import (
     CURRENT,
     FIELD_LABELS,
@@ -69,6 +70,19 @@ _FIELD_WORDS = {
     ).split()
     for token in tokenize(word)
 }
+# "Todas las vacunas" / "cada vacuna": lista completa del campo, sin filtrar.
+_LIST_ALL_RE = re.compile(
+    r"\b(?:todas|todos)\s+(?:las\s+|los\s+)?vacunas?\b|\bcada\s+vacuna\b|"
+    r"\bde\s+(?:las|todas\s+las)\s+vacunas\b|\bde\s+cada\s+vacuna\b"
+)
+_NO_JERINGA_RE = re.compile(
+    r"\bno\s+(?:usan?|requieren?|necesitan?)\b[^?]*\bjeringa|\bsin\s+jeringa\b"
+)
+# "Ya no están" / "eliminadas": el diff se pregunta por lo que salió, no por lo nuevo.
+_REMOVED_RE = re.compile(
+    r"\bya\s+no\b|\beliminad|\bquitad|\bdej(?:o|aron)\s+de\b|"
+    r"\bno\s+(?:estan|figuran|aparecen)\b"
+)
 
 
 @dataclass
@@ -127,6 +141,27 @@ def _filter_answer(plan: Plan, matrix: Matrix) -> Structured | None:
     return Structured("filtro", render_list(title, cells, campo), cells)
 
 
+def _list_all_field(plan: Plan, matrix: Matrix, campo: str) -> Structured | None:
+    cells = matrix.filter(campo, _doc(plan), lambda _: True)
+    if not cells:
+        return None
+    title = f"{FIELD_LABELS[campo]} de cada vacuna"
+    return Structured("lista_campo", render_list(title, cells, campo), cells)
+
+
+def _no_jeringa(plan: Plan, matrix: Matrix) -> Structured | None:
+    doc = _doc(plan)
+    cells = [
+        cell
+        for slug in sorted(NO_APLICA["JERINGAS"])
+        if (cell := matrix.get(slug, "VIA_Y_SITIO", doc)) is not None
+    ]
+    if not cells:
+        return None
+    title = "Vacunas que no se administran con jeringa (vía oral)"
+    return Structured("sin_jeringa", render_list(title, cells, "VIA_Y_SITIO"), cells)
+
+
 def structured_answer(plan: Plan, matrix: Matrix) -> Structured | None:
     """Respuesta por plantilla si la intención la resuelve la matriz; None si no."""
 
@@ -151,6 +186,21 @@ def structured_answer(plan: Plan, matrix: Matrix) -> Structured | None:
             return None
         nuevas = [row for row in rows if row.clase == "nuevo"]
         eliminadas = [row for row in rows if row.clase == "eliminado"]
+        if _REMOVED_RE.search(question):
+            if not eliminadas:
+                return Structured(
+                    "diff_catalogo",
+                    "**No existen fichas de vacunas que ya no estén en la NTS 246-2026** "
+                    "respecto a la NTS 196-2022.",
+                    [],
+                )
+            lines = [f"**Fichas que ya no están** ({len(eliminadas)}):", ""]
+            lines += [
+                f"- {name(r.slug)} {r.anterior.cita if r.anterior else ''}" for r in eliminadas
+            ]
+            return Structured(
+                "diff_catalogo", "\n".join(lines), [r.anterior for r in eliminadas if r.anterior]
+            )
         lines = [f"**Fichas nuevas en la NTS 246-2026** ({len(nuevas)}):", ""]
         lines += [f"- **{name(r.slug)}** {r.actual.cita if r.actual else ''}" for r in nuevas]
         if eliminadas:
@@ -179,6 +229,15 @@ def structured_answer(plan: Plan, matrix: Matrix) -> Structured | None:
     if not plan.entidades and "VIA_Y_SITIO" in plan.campos and asks_list:
         table, cells = render_sites(matrix, _doc(plan))
         return Structured("sitios", table, cells)
+
+    # "¿Cuál es la conservación de todas las vacunas?" / "…de cada vacuna": lista
+    # completa del campo. "¿Qué vacunas no usan jeringa?": las orales del catálogo.
+    campos = [campo for campo in plan.campos if campo in PROPERTY_FIELDS]
+    if not plan.entidades and campos:
+        if "JERINGAS" in campos and _NO_JERINGA_RE.search(question):
+            return _no_jeringa(plan, matrix)
+        if _LIST_ALL_RE.search(question):
+            return _list_all_field(plan, matrix, campos[0])
 
     if plan.intencion == "global" and not plan.entidades:
         return _filter_answer(plan, matrix)

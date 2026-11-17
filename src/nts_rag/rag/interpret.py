@@ -245,8 +245,8 @@ def validate_plan(data: dict) -> list[str]:
     if data.get("intencion") not in INTENCIONES:
         errors.append(f"intencion desconocida: {data.get('intencion')!r}")
     entidades = data.get("entidades") or []
-    if not isinstance(entidades, list) or len(entidades) > MAX_ENTIDADES:
-        errors.append(f"entidades: máximo {MAX_ENTIDADES}")
+    if not isinstance(entidades, list):
+        errors.append("entidades: debe ser una lista")
         entidades = []
     for entidad in entidades:
         slug = entidad.get("slug") if isinstance(entidad, dict) else entidad
@@ -295,22 +295,32 @@ def _parse_json(text: str) -> dict | None:
 
 
 def _plan_from_llm(question: str, data: dict, fallback: Plan) -> Plan:
+    # El LLM tiende a listar todas las fichas o a añadir vacunas que la pregunta no
+    # nombra. El catálogo decide: solo quedan las que están en el texto.
+    mentioned = set(detect_vaccines(question))
     entidades = [
         entidad.get("slug") if isinstance(entidad, dict) else entidad
         for entidad in data.get("entidades") or []
     ]
+    entidades = [slug for slug in entidades if slug in mentioned][:MAX_ENTIDADES]
     normalizada = (data.get("pregunta_normalizada") or "").strip() or None
     return Plan(
         pregunta=question,
         intencion=data["intencion"],
-        entidades=[slug for slug in entidades if slug],
+        entidades=entidades,
         campos=list(data.get("campos") or []),
-        edad_meses=data.get("edad_meses"),
+        # La edad que detecta el catálogo es más fiable que la que estima el LLM
+        # ("menor de 5 años" no son 60 meses).
+        edad_meses=(
+            fallback.edad_meses if fallback.edad_meses is not None else data.get("edad_meses")
+        ),
         version=data.get("version") or "vigente",
         subconsultas=[str(s) for s in data.get("subconsultas") or []],
         supuestos=[str(s) for s in data.get("supuestos") or []],
-        premisas_no_soportadas=[str(s) for s in data.get("premisas_no_soportadas") or []],
-        requiere_aclaracion=bool(data.get("requiere_aclaracion")),
+        # El LLM usa este campo para dudas ("podría no existir"), no para premisas
+        # falsas: sin contraste con la evidencia no puede degradar la respuesta.
+        premisas_no_soportadas=[],
+        requiere_aclaracion=fallback.requiere_aclaracion,
         # Señales deterministas que el contrato del LLM no trae.
         rescate=fallback.rescate,
         terapia=fallback.terapia,

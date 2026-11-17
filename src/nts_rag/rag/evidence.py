@@ -71,6 +71,16 @@ def _operational_annex(chunk: RetrievedChunk) -> bool:
     return "anexo" in section and not is_domain_section(chunk.seccion_ruta, chunk.seccion_numero)
 
 
+def _clinical_section(chunk: RetrievedChunk) -> bool:
+    """Sección que responde una pregunta clínica (no gestión ni programación)."""
+
+    if (chunk.seccion_numero or "").startswith("6.1.1"):
+        return True
+    return not _operational_annex(chunk) and is_domain_section(
+        chunk.seccion_ruta, chunk.seccion_numero
+    )
+
+
 def rescore(chunks: list[RetrievedChunk], plan: Plan) -> list[RetrievedChunk]:
     """Ajusta el RRF con el plan y reordena. Refuerzos pequeños y deterministas."""
 
@@ -198,6 +208,15 @@ def gather_evidence(
     chunks: list[dict[str, Any]] = getattr(retriever, "chunks", None) or []
     docs = _documents(plan, filtros)
     main = rescore(retriever.search(query, k=POOL, filtros=_filtros(filtros, plan)), plan)
+    # Una pregunta de edad se responde con secciones clínicas (calendario, fichas,
+    # anexos de dominio). Los anexos operativos y las secciones de gestión
+    # (programación, indicadores) son los señuelos de la p. 121.
+    if plan.edad_meses is not None:
+        main = (
+            [c for c in main if _clinical_section(c)]
+            or [c for c in main if not _operational_annex(c)]
+            or main
+        )
 
     slots: list[RetrievedChunk] = []
     faltantes: list[tuple[str, str, str]] = []
@@ -283,6 +302,8 @@ def gather_evidence(
     def unique(items: list[RetrievedChunk]) -> list[RetrievedChunk]:
         out = []
         for chunk in items:
+            if plan.edad_meses is not None and not _clinical_section(chunk):
+                continue
             if chunk.id not in seen and not _foreign_ficha(chunk, plan):
                 seen.add(chunk.id)
                 out.append(chunk)

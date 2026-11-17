@@ -153,6 +153,17 @@ def test_silent_substitution_metric():
     assert not silent_substitution(plan, [_chunk("hva", "6.1.1.18")], shown)
 
 
+def test_abstention_shows_the_interpreted_question():
+    """Una abstención también declara cómo se leyó la pregunta (sustitución = 0)."""
+
+    settings = Settings(_env_file=None)
+    plan = deterministic_plan("¿Qué dice la norma del ébola?")
+    plan.pregunta_normalizada = "Esquema de la vacuna contra el ébola"
+    result = answer_mod.generate_answer(settings, plan.pregunta, [], plan=plan)
+    assert result.estado == "abstenida"
+    assert "Pregunta interpretada como" in result.text
+
+
 # --- Clave de API y registro ------------------------------------------------------
 
 

@@ -149,10 +149,8 @@ JSON con los números de los fragmentos ordenados de más a menos relevante para
 pregunta. Ejemplo: [3, 1, 2]. No expliques nada ni añadas texto.
 """
 
-VERIFY_SYSTEM = """Eres un verificador de respuestas. Recibes una pregunta, una respuesta y los \
-fragmentos fuente. Responde exactamente "OK" si todas las afirmaciones de la respuesta están \
-contenidas o se deducen directamente de los fragmentos, y "NO" en caso contrario. No añadas \
-ninguna otra palabra.
+VERIFY_SYSTEM = """Verifica si la respuesta se apoya en los fragmentos. Las tablas o listas \
+resumidas de ellos cuentan como apoyo. Responde solo "OK" o "NO".
 """
 
 # Instrucción para el redactor según el veredicto: el código decide el estado; el
@@ -473,7 +471,12 @@ def generate_answer(
     if verdict.estado in {"abstenida", "aclaracion"}:
         text = NO_ANSWER if verdict.motivo in {"fuera_de_alcance", "sin_evidencia"} else ""
         reason = MOTIVO_TEXTO.get(verdict.motivo or "", "")
-        body = "\n\n".join(part for part in (text, reason) if part)
+        parts = [text, reason]
+        # La reformulación se muestra también al abstenerse: es la interpretación
+        # que el sistema descartó (Fase 4: sustitución silenciosa = 0).
+        if plan.pregunta_normalizada:
+            parts.append(f"> Pregunta interpretada como: *{plan.pregunta_normalizada}*")
+        body = "\n\n".join(part for part in parts if part)
         return finish(AnswerResult(text=body, mode="extractivo", estado=verdict.estado))
 
     notes = _notes(verdict, plan)
@@ -485,7 +488,7 @@ def generate_answer(
         parts = [*notes, "" if notes else None, structured.text]
         cell_ids = {cell.chunk["id"] for cell in structured.cells}
         extra = [c for c in chunks if c.id not in cell_ids]
-        if plan.subconsultas and extra:
+        if structured.cells and plan.subconsultas and extra:
             fragment = _extractive(extra[:1]).text
             parts += ["", fragment.replace("**Según la normativa cargada:**", "**Además:**")]
         text = "\n".join(part for part in parts if part is not None).strip()
@@ -538,6 +541,9 @@ def run_query(
         plan, evidence = plan_and_gather(
             retriever, query, k=k, filtros=filtros, chat=chat, attempts=attempts
         )
+        # La matriz contestó: la vaguedad ya no aplica.
+        if evidence.estructurada is not None:
+            plan.requiere_aclaracion = False
         chunks = evidence.fuentes
         # El re-rankeo solo entra si el plan del LLM falló y aún cabe en el presupuesto.
         rerank_fits = len(usage) + 1 + reserve <= settings.llm_max_calls
@@ -592,7 +598,7 @@ def plan_and_gather(
         plan.version = "ambas" if filtros.vigencia == "todas" else filtros.vigencia
     evidence = gather_evidence(retriever, query, plan, k=k, filtros=filtros)
     structured = structured_answer(plan, get_matrix(retriever))
-    if structured is not None and structured.cells:
+    if structured is not None:
         # Las celdas de la matriz son las fuentes principales; después, la evidencia.
         cell_sources = structured.fuentes
         ids = {chunk.id for chunk in cell_sources}

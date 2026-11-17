@@ -160,6 +160,10 @@ def test_diff_precision_does_not_regress(matrix, name, minimum):
         ("¿Qué vacunas nuevas incorpora la NTS 246-2026 respecto a la NTS 196-2022?",
          "diff_catalogo", 6),
         ("¿Qué cambió en la dosis de rescate de la BCG entre 2022 y 2026?", "diff", 2),
+        ("¿Cuál es la conservación de las vacunas?", "lista_campo", 24),
+        ("¿Cuánto es el margen para la rotura de cadena de frío de cada vacuna?",
+         "lista_campo", 24),
+        ("¿Qué vacunas no usan jeringa?", "sin_jeringa", 2),
     ],
 )
 def test_structured_routes(matrix, question, kind, cells):
@@ -168,6 +172,16 @@ def test_structured_routes(matrix, question, kind, cells):
     assert len(result.cells) == cells
     # D11: cada celda lleva su cita.
     assert all(cell.cita in result.text for cell in result.cells)
+
+
+def test_catalog_diff_answers_when_nothing_was_removed(matrix):
+    """"¿Qué vacunas ya no están…?" no debe responder con las fichas nuevas."""
+
+    result = structured_answer(
+        deterministic_plan("¿Qué vacunas ya no están en la normativa actual?"), matrix
+    )
+    assert result is not None and result.kind == "diff_catalogo"
+    assert "No existen" in result.text and not result.cells
 
 
 def test_lookup_is_not_routed_to_the_matrix(matrix):

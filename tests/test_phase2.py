@@ -71,6 +71,14 @@ def test_plan_flags_rescate_ambiguity_and_therapy():
     assert deterministic_plan("¿Cuánto paracetamol se le da a un niño?").terapia
 
 
+def test_age_question_keeps_the_named_vaccine_ficha(corpus):
+    """La ruta de edad no debe descartar la ficha clínica (6.1.1.x) de la vacuna."""
+
+    question = "¿Se le puede poner la primera dosis de rotavirus a un niño de 12 meses?"
+    evidence = gather_evidence(_Retriever(corpus), question, deterministic_plan(question))
+    assert any(c.seccion_numero == "6.1.1.9" for c in evidence.fuentes)
+
+
 def test_subqueries_split_only_between_questions():
     plan = deterministic_plan(
         "¿Qué vacunas recibe una gestante y cuáles están contraindicadas en el embarazo?"
@@ -119,6 +127,27 @@ def test_plan_query_uses_a_valid_llm_plan():
     assert plan.origen == "llm"
     assert plan.campos == ["COMPOSICION"]
     assert plan.pregunta_normalizada == "Composición de la vacuna BCG"
+
+
+def test_llm_plan_cannot_invent_entities_or_premises():
+    """Un modelo real lista las 24 fichas y duda de la pregunta; el catálogo manda."""
+
+    plan = plan_query(
+        "¿Qué vacunas debe tener un niño de 5 años?",
+        lambda system, user: _llm_plan(
+            intencion="conjunto",
+            entidades=[
+                {"slug": slug}
+                for slug in ("bcg", "hvb", "hexavalente", "pentavalente", "ipv", "apo")
+            ],
+            premisas_no_soportadas=["La norma clasifica las vacunas en prioritarias"],
+            requiere_aclaracion=True,
+        ),
+    )
+    assert plan.origen == "llm"
+    assert plan.entidades == []
+    assert plan.premisas_no_soportadas == []
+    assert not plan.requiere_aclaracion
 
 
 def test_plan_query_retries_once_then_falls_back():
