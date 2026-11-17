@@ -7,9 +7,12 @@
 > sección, veredicto por código y citas `[cN]`; estado exacto 45/45 y contaminación
 > 0. **Fase 3 hecha**: matriz vacuna × campo × versión, diff entre normas, rutas
 > estructuradas y comandos `ficha`/`comparar`/`diff`; estado exacto 52/52 y
-> precisión del diff **0,92 en un set ciego** (objetivo 0,90). Resultados y
-> desviaciones en §9.3 y §10.
-> Fecha: 2026-11-16 · Siguiente paso: Fase 4 de §10.
+> precisión del diff **0,92 en un set ciego** (objetivo 0,90). **Fase 4 hecha**:
+> presupuesto de ≤ 3 llamadas garantizado en código, presupuesto de tokens por
+> intención, sustitución silenciosa 0/52, `uv.lock`, pre-commit, CI listo (pendiente de activar), registro
+> de consultas y clave de API opcional. Resultados y desviaciones en §9.3 y §10.
+> Fecha: 2026-11-16 · Siguiente paso: medir la ruta LLM con un modelo real y las
+> complementarias de §10.
 
 ## 0. TL;DR y mandato
 
@@ -643,6 +646,14 @@ Umbrales de Fase 3:
 - La tabla de valencias incluye APO (bivalente), que la referencia de §7.4 no
   listaba: es un dato del texto, no un error.
 
+**Resultado Fase 4** (2026-11-16): el eval completo no cambia (estado exacto
+52/52, contaminación 0, cobertura 6/6) y se añaden dos métricas.
+
+| Métrica | Objetivo | Resultado |
+|---|---|---|
+| llamadas por consulta | ≤ 3 | **≤ 3 garantizado** por `_chat` (tope duro por consulta). Peor caso probado con LLM simulado: plan inválido → sin reintento ni re-rankeo, redacción + verificación = 3. Sin LLM: 0 en las 52 preguntas ✅ |
+| sustitución silenciosa | 0 | **0/52** ✅ (vacuna nombrada sin fuente propia respondida como tal, o reformulación no mostrada) |
+
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Fase 1 | recall@10 agregación | ≥ 0.80 |
@@ -803,10 +814,41 @@ Plan original:
 Plan original: `fichas.py` (matriz, valores canónicos, operaciones), `entidades.py`
 (catálogo y alias), render de tabla/diff, comandos `comparar`, `ficha`, `diff`.
 
-### Fase 4 — Endurecer
+### Fase 4 — Endurecer ✅
 
-Tests, CI, `uv.lock`, pre-commit, log de consultas, medición de tokens, re-ranker
-local si el eval lo pide, auth si se expone.
+**Hecho** (resultados en §9.3):
+
+| Pieza | Cambio aplicado |
+|---|---|
+| Presupuesto de llamadas | `NTS_RAG_LLM_MAX_CALLS` (3). `_chat` rechaza cualquier llamada por encima del tope de la consulta y cuenta también las fallidas. Se reservan la redacción y la verificación; el plan usa lo que queda (con 3 y verificación: un intento, sin reintento). El re-rankeo solo entra si el plan del LLM falló **y** cabe. |
+| Presupuesto de tokens | El contexto del redactor se limita por intención (§8.3: lookup 2k, edad 4k, comparación 6k, global 8k, resto 12k; 600 para el prompt). Las rutas estructuradas cuestan 0. |
+| Sustitución silenciosa | Regla en el veredicto: si la pregunta nombra una vacuna sin ninguna fuente propia, `parcial`/`evidencia_insuficiente` y se nombra. Métrica `sustitucion_silenciosa` en `evaluar` (también reformulación no mostrada). |
+| Coste en `evaluar` | Media y máximo de llamadas y tokens por consulta. |
+| Registro de consultas | `NTS_RAG_QUERY_LOG` (desactivado por defecto): una línea JSONL por `/consulta` con estado, motivo, intención, fuentes, llamadas, tokens y tiempo. `logs/` en `.gitignore`. |
+| Auth | `NTS_RAG_API_KEY`: `/consulta` y `/buscar` exigen `X-API-Key` o `Authorization: Bearer` (comparación en tiempo constante); `/salud` y `/health` siguen abiertas para los healthchecks. |
+| `uv.lock` | 96 paquetes fijados; `make install` = `uv sync --extra dev`, `make lock`. Verificado instalando en un entorno limpio solo desde el lockfile: ruff y 169 tests en verde. |
+| CI | **Pendiente de activar.** Workflow listo en `docs/ci-pendiente.yml` (`uv sync --frozen`, ruff y pytest en Python 3.12 en cada PR y push a `main`; no necesita el modelo de embeddings). No se subió a `.github/workflows/` porque el token de GitHub de la autora no tiene permiso `workflow`; activarlo es moverlo ahí (README, "Calidad"). |
+| pre-commit | `.pre-commit-config.yaml`: ruff (misma versión que el lockfile), YAML/JSON, conflictos, archivos grandes (≤ 30 MB por el índice) y pytest antes de cada push. |
+| Tests | 169 (eran 51 al empezar): `test_phase4.py` cubre presupuesto, tope, tokens, sustitución, auth y registro. |
+
+**Desviaciones y decisiones tomadas:**
+
+- **Re-ranker local: no.** El plan lo condicionaba a que el eval lo pidiera, y con
+  recall@10 0.99 y 52/52 estados no lo pide; añadiría CPU y latencia.
+- El reintento del plan de §7.2 queda supeditado al presupuesto: con los valores
+  por defecto (3 llamadas, verificación activa) no hay reintento y, si el plan del
+  LLM no valida, se usa el determinista. Con `NTS_RAG_VERIFY=false` el reintento
+  vuelve a caber.
+- El presupuesto de tokens recorta el contexto, pero no marca `parcial` al
+  recortar: la cobertura la garantizan los slots, que van primero.
+- El CI se dejó **sin activar** en esta entrega (ver tabla). Cuando se active
+  correrá en Python 3.12 (Linux). En este equipo el Python 3.12 de uv no se pudo
+  instalar (fallo de uv en Windows), así que el entorno limpio se validó con 3.13.
+- **Sigue sin medirse la ruta LLM con un modelo real**: plan, redacción `[cN]`,
+  verificación y conteo de tokens están probados con un LLM simulado.
+
+Plan original: tests, CI, `uv.lock`, pre-commit, log de consultas, medición de
+tokens, re-ranker local si el eval lo pide, auth si se expone.
 
 ### Complementarias
 

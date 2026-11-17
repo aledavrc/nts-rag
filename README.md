@@ -80,11 +80,11 @@ contenido mostrable.
 ## Instalación
 
 Requisitos: Python 3.12, [uv](https://docs.astral.sh/uv/) y, opcionalmente,
-Docker.
+Docker. Las versiones exactas de las dependencias están en `uv.lock`.
 
 ```bash
 cp .env.example .env
-make install       # crea .venv e instala dependencias
+make install       # uv sync --extra dev: crea .venv con las versiones de uv.lock
 make doctor        # comprueba qué falta
 make serve         # API en http://127.0.0.1:8000
 ```
@@ -92,9 +92,33 @@ make serve         # API en http://127.0.0.1:8000
 Sin `make`:
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install -e ".[dev]"
-.venv/bin/python -m nts_rag.cli servir --reload
+uv sync --extra dev
+uv run python -m nts_rag.cli servir --reload
+```
+
+Tras cambiar dependencias en `pyproject.toml`, regenera el lockfile con `make lock`
+(`uv lock`) y commitéalo: `uv sync --frozen` (lo que usará CI) falla si no coincide.
+
+### Calidad: CI y pre-commit
+
+**CI pendiente de activar.** El workflow está listo en `docs/ci-pendiente.yml`:
+corre ruff y pytest con `uv.lock` en cada pull request y en cada push a `main`, sin
+necesitar el modelo de embeddings. No está en `.github/workflows/` porque subir
+workflows exige un token de GitHub con permiso `workflow`. Para activarlo, con ese
+permiso:
+
+```bash
+mkdir -p .github/workflows
+git mv docs/ci-pendiente.yml .github/workflows/ci.yml
+git commit -m "Activa el CI"
+git push
+```
+
+Mientras tanto, pre-commit corre lo mismo en local antes de cada commit y push:
+
+```bash
+uv tool install pre-commit
+pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
 El índice (`data/index/`) está versionado: no hace falta construirlo para
@@ -252,14 +276,17 @@ NTS_RAG_LLM_MODEL=qwen2.5:7b \
 make serve
 ```
 
-Con LLM configurado, la consulta hace como mucho tres llamadas:
+Con LLM configurado, la consulta hace como mucho `NTS_RAG_LLM_MAX_CALLS` llamadas
+(3 por defecto). El tope se hace cumplir en código: una llamada que lo supere no se
+envía, y las fallidas también cuentan.
 
 1. **Plan**: el LLM interpreta la pregunta (intención, vacunas, campos, edad,
    versión, subconsultas, premisas dudosas) en un JSON que el código valida contra
-   los catálogos; si no valida tras un reintento, se usa el plan determinista. El
-   plan **sustituye al re-rankeo**: trae filtros exactos en vez de reordenar
-   candidatos. (El re-rankeo solo se usa si el plan del LLM falla y
-   `NTS_RAG_RERANK=true`.)
+   los catálogos; si no valida, se usa el plan determinista. Solo se reintenta si
+   el reintento cabe en el presupuesto (con los valores por defecto, no). El plan
+   **sustituye al re-rankeo**: trae filtros exactos en vez de reordenar candidatos.
+   El re-rankeo solo entra si el plan del LLM falla, `NTS_RAG_RERANK=true` y aún
+   cabe en el presupuesto.
 2. **Respuesta**: el LLM redacta usando únicamente la evidencia (fuentes más los
    hermanos de su sección: ficha completa, filas de la misma tabla) y cita con
    etiquetas `[c1]`, `[c2]`… que el código sustituye por la cita exacta desde los
@@ -290,6 +317,15 @@ El índice versionado se monta tal cual; reconstruye con `make index` solo si ca
 chunks. Si el índice no existe o no coincide con los chunks (por ejemplo, tras
 `make chunks` sin `make index`), `/salud` (o `/health`) responde `degradado`; sin índice,
 las consultas devuelven 503.
+
+Si el puerto queda accesible fuera de tu máquina, define `NTS_RAG_API_KEY`: `/consulta`
+y `/buscar` exigirán la cabecera `X-API-Key` (o `Authorization: Bearer …`). `/salud` y
+`/health` siguen abiertas para los healthchecks.
+
+```bash
+curl -X POST http://localhost:8000/consulta -H "X-API-Key: $NTS_RAG_API_KEY" \
+  -H "Content-Type: application/json" -d '{"pregunta": "¿Qué dosis lleva la BCG?"}'
+```
 
 ## Estructura
 
@@ -338,6 +374,9 @@ nts-rag/
 │       ├── answer.py             # pipeline, citas [cN], LLM opcional / extractivo
 │       └── formatting.py         # Markdown para respuestas
 ├── tests/
+├── docs/ci-pendiente.yml         # workflow de CI listo para .github/workflows/
+├── .pre-commit-config.yaml
+├── uv.lock                       # versiones exactas de las dependencias
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
@@ -361,6 +400,9 @@ nts-rag/
 | `NTS_RAG_LLM_MODEL` | `qwen2.5:7b` | Modelo del LLM |
 | `NTS_RAG_LLM_API_KEY` | `ollama` | Clave del LLM |
 | `NTS_RAG_VERIFY` | `true` | Verificación de fidelidad de la respuesta |
+| `NTS_RAG_LLM_MAX_CALLS` | `3` | Tope de llamadas al LLM por consulta (se hace cumplir) |
+| `NTS_RAG_API_KEY` | vacío | Si se define, `/consulta` y `/buscar` exigen esta clave |
+| `NTS_RAG_QUERY_LOG` | vacío | Ruta de un registro JSONL de consultas (opt-in; puede contener datos de salud) |
 
 ## Evaluación
 
@@ -404,7 +446,7 @@ listas globales están completas (6/6) y la contradicción conocida sale con amb
 citas. La precisión del diff es 0,92 en el set de control ciego (22/24). El detalle
 está en
 [`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
-`tests/test_smoke_index.py` comprueba en CI la estructura del índice versionado
+`tests/test_smoke_index.py` comprueba (en local y, cuando se active, en CI) la estructura del índice versionado
 (totales, fichas, campos, lint, IDs y frescura del manifiesto).
 
 ## Limitaciones
