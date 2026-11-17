@@ -117,6 +117,40 @@ def contamination(plan: Any, chunks: list[RetrievedChunk]) -> int:
     return count
 
 
+def coverage(row: dict[str, Any], chunks: list[RetrievedChunk]) -> tuple[bool, float] | None:
+    """Fase 3: vacunas o celdas esperadas entre todas las fuentes (no solo el top-k).
+
+    Devuelve (completa, precisión de la lista) o None si la fila no lo pide.
+    """
+
+    if row.get("celdas_esperadas"):
+        expected = {tuple(cell) for cell in row["celdas_esperadas"]}
+        found = {
+            (c.metadata.get("vacuna_slug"), c.campo) for c in chunks if c.tipo == "campo"
+        }
+        hit = expected & found
+        return hit == expected, len(hit) / len(found) if found else 0.0
+    if row.get("vacunas_esperadas"):
+        expected = set(row["vacunas_esperadas"])
+        found = {
+            str(c.metadata.get("vacuna_slug"))
+            for c in chunks
+            if c.metadata.get("vacuna_slug") and c.tipo in {"campo", "tabla", "texto"}
+        }
+        hit = expected & found
+        return hit == expected, len(hit) / len(found) if found else 0.0
+    return None
+
+
+def citations_ok(row: dict[str, Any], answer_text: str) -> bool | None:
+    """Cada numeral esperado aparece citado en la respuesta (contradicciones)."""
+
+    expected = row.get("citas_esperadas")
+    if not expected:
+        return None
+    return all(re.search(rf"(?<![\d.]){re.escape(n)}(?![\d])", answer_text) for n in expected)
+
+
 @dataclass
 class RowResult:
     row: dict[str, Any]
@@ -126,6 +160,8 @@ class RowResult:
     motivo: str | None = None
     reformulacion: RetrievalScore | None = None
     contaminacion: int | None = None
+    cobertura: tuple[bool, float] | None = None
+    citas: bool | None = None
 
     @property
     def estado_esperado(self) -> str:
@@ -189,6 +225,17 @@ def summarize(results: list[RowResult], ks: list[int]) -> dict[str, Any]:
 
     medidas = [r.contaminacion for r in results if r.contaminacion is not None]
     summary["contaminacion"] = [sum(medidas), len(medidas)] if medidas else None
+    cubiertas = [r.cobertura for r in results if r.cobertura is not None]
+    summary["cobertura"] = (
+        {
+            "completas": [sum(ok for ok, _ in cubiertas), len(cubiertas)],
+            "precision": _mean([precision for _, precision in cubiertas]),
+        }
+        if cubiertas
+        else None
+    )
+    citadas = [r.citas for r in results if r.citas is not None]
+    summary["citas"] = [sum(citadas), len(citadas)] if citadas else None
 
     reformuladas = [r.reformulacion for r in results if r.reformulacion is not None]
     summary["reformulacion_util"] = (
@@ -237,6 +284,12 @@ def format_summary(summary: dict[str, Any], ks: list[int], *, title: str) -> str
     if summary.get("contaminacion"):
         total, preguntas = summary["contaminacion"]
         lines.append(f"  contaminación {total} fuentes en {preguntas} preguntas (@{ks[0]})")
+    if summary.get("cobertura"):
+        ok, n = summary["cobertura"]["completas"]
+        precision = _fmt(summary["cobertura"]["precision"])
+        lines.append(f"  cobertura de vacunas/celdas {ok}/{n} · precisión de la lista {precision}")
+    if summary.get("citas"):
+        lines.append("  ambas citas en la respuesta {}/{}".format(*summary["citas"]))
     reformulacion = summary["reformulacion_util"]
     if reformulacion:
         lines.append(f"  reformulación útil {reformulacion[0]}/{reformulacion[1]}")

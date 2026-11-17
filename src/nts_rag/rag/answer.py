@@ -8,12 +8,15 @@ from typing import Any
 
 import httpx
 
-from nts_rag.config import DOC_TITLE, Settings
+from nts_rag.config import Settings
 from nts_rag.rag.abstain import Verdict, judge
+from nts_rag.rag.citations import citation, document_label, pages
 from nts_rag.rag.evidence import Evidence, gather_evidence
+from nts_rag.rag.fichas import get_matrix
 from nts_rag.rag.formatting import clip_markdown, format_chunk_markdown
 from nts_rag.rag.interpret import Plan, deterministic_plan, plan_query
 from nts_rag.rag.retrieve import RetrievedChunk, Retriever
+from nts_rag.rag.structured import Structured, structured_answer
 from nts_rag.text import expand_tokens, tokenize
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,8 @@ _USAGE: contextvars.ContextVar[list[tuple[int, int]] | None] = contextvars.Conte
 )
 
 NO_ANSWER = "No se encontró esa información en la normativa cargada."
+# Una tabla de la matriz puede citar muchas celdas (vía y sitio: 24).
+MAX_STRUCTURED_SOURCES = 30
 
 GENERIC_QUERY_TERMS = {
     "ano",
@@ -176,22 +181,10 @@ class AnswerResult:
     plan: dict[str, Any] | None = None
 
 
-def _pages(chunk: RetrievedChunk) -> str:
-    if chunk.pagina_fin > chunk.pagina:
-        return f"pp. {chunk.pagina}–{chunk.pagina_fin}"
-    return f"p. {chunk.pagina}"
-
-
-def _document_label(chunk: RetrievedChunk) -> str:
-    """Documento de la cita: sale de los metadatos del chunk, nunca del LLM."""
-
-    title = chunk.documento or DOC_TITLE
-    return f"{title} (derogada)" if chunk.vigencia == "derogada" else title
-
-
-def _citation(chunk: RetrievedChunk) -> str:
-    section = chunk.seccion or "sin sección"
-    return f"[{_document_label(chunk)}, {_pages(chunk)}, sección {section}]"
+# Alias conservados: los tests y otros módulos los usan con estos nombres.
+_pages = pages
+_document_label = document_label
+_citation = citation
 
 
 def _extractive(chunks: list[RetrievedChunk], *, max_fragments: int = 1) -> AnswerResult:
@@ -427,6 +420,7 @@ def generate_answer(
     plan: Plan | None = None,
     context: list[RetrievedChunk] | None = None,
     verdict: Verdict | None = None,
+    structured: Structured | None = None,
 ) -> AnswerResult:
     plan = plan or deterministic_plan(query)
     if verdict is None:
@@ -450,6 +444,20 @@ def generate_answer(
         return finish(AnswerResult(text=body, mode="extractivo", estado=verdict.estado))
 
     notes = _notes(verdict, plan)
+
+    # Ruta estructurada (comparación, lista, diff, valencias): plantilla con cita
+    # por celda y 0 llamadas (§8.3). Si la pregunta tenía otra parte (subconsulta),
+    # se añade su fragmento.
+    if structured is not None:
+        parts = [*notes, "" if notes else None, structured.text]
+        cell_ids = {cell.chunk["id"] for cell in structured.cells}
+        extra = [c for c in chunks if c.id not in cell_ids]
+        if plan.subconsultas and extra:
+            fragment = _extractive(extra[:1]).text
+            parts += ["", fragment.replace("**Según la normativa cargada:**", "**Además:**")]
+        text = "\n".join(part for part in parts if part is not None).strip()
+        return finish(AnswerResult(text=text, mode="estructurado"))
+
     result = _llm_answer(settings, query, context, verdict)
     if result is not None and result.text.strip() != NO_ANSWER:
         if _verify_grounded(settings, query, result.text, context):
@@ -496,15 +504,26 @@ def run_query(
         # La reformulación del plan acerca la pregunta al vocabulario de la norma
         # ("¿de qué está hecha?" → "composición"): el chequeo de alcance la usa.
         checked = plan.pregunta_normalizada or query
+        # Si la matriz resolvió la pregunta (comparación, diff, lista), está en el
+        # alcance aunque sus palabras ("nuevas", "incorpora") no estén en las celdas.
+        answerable = bool(chunks) and (
+            evidence.estructurada is not None or is_answerable(checked, chunks)
+        )
         verdict = judge(
             plan,
             chunks,
-            answerable=bool(chunks) and is_answerable(checked, chunks),
+            answerable=answerable,
             chunks=getattr(retriever, "chunks", None) or [],
             faltantes=evidence.faltantes,
         )
         result = generate_answer(
-            settings, query, chunks, plan=plan, context=evidence.contexto, verdict=verdict
+            settings,
+            query,
+            chunks,
+            plan=plan,
+            context=evidence.contexto,
+            verdict=verdict,
+            structured=evidence.estructurada,
         )
     finally:
         _USAGE.reset(token)
@@ -527,4 +546,14 @@ def plan_and_gather(
     plan = plan_query(query, chat)
     if filtros is not None and getattr(filtros, "vigencia", None):
         plan.version = "ambas" if filtros.vigencia == "todas" else filtros.vigencia
-    return plan, gather_evidence(retriever, query, plan, k=k, filtros=filtros)
+    evidence = gather_evidence(retriever, query, plan, k=k, filtros=filtros)
+    structured = structured_answer(plan, get_matrix(retriever))
+    if structured is not None and structured.cells:
+        # Las celdas de la matriz son las fuentes principales; después, la evidencia.
+        cell_sources = structured.fuentes
+        ids = {chunk.id for chunk in cell_sources}
+        rest = [chunk for chunk in evidence.fuentes if chunk.id not in ids]
+        limit = min(max(k, len(cell_sources)), MAX_STRUCTURED_SOURCES)
+        evidence.fuentes = (cell_sources + rest)[:limit]
+        evidence.estructurada = structured
+    return plan, evidence

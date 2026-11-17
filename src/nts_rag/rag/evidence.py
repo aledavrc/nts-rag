@@ -28,6 +28,7 @@ MAX_SOURCES = 10
 MAX_PER_SECTION = 2
 CONTEXT_BUDGET = 16_000
 RESCATE_SECTION = "dosis de rescate"
+VIAS_SECTION = "vias y tecnicas de administracion"
 CALENDAR_SECTION = "6.2"
 DOCUMENT_FOR_VIGENCIA = {"vigente": "nts-246-2026", "derogada": "nts-196-2022"}
 # Campos que responde el calendario (6.2.x), no un barrido de fichas.
@@ -40,6 +41,8 @@ class Evidence:
     contexto: list[RetrievedChunk] = field(default_factory=list)
     # Slots pedidos por el plan que no tienen fuente: (vacuna, campo, documento).
     faltantes: list[tuple[str, str, str]] = field(default_factory=list)
+    # Respuesta por plantilla de la matriz, si la intención la tiene (Fase 3).
+    estructurada: Any = None
 
 
 def _from_dict(chunk: dict[str, Any]) -> RetrievedChunk:
@@ -261,7 +264,15 @@ def gather_evidence(
     if sweep_fields and not plan.entidades and plan.intencion in {"max_atributo", "global"}:
         slots.extend(_field_sweep(chunks, query, sweep_fields, docs))
 
-    # 4. Una fuente por subconsulta.
+    # 4. Vía y sitio sin vacuna nombrada: el Anexo de vías y técnicas es la
+    # referencia general ("¿cuándo se deja de vacunar en el vasto externo?").
+    if "VIA_Y_SITIO" in plan.campos and not plan.entidades:
+        for doc in docs:
+            best = _best_in(retriever, query, plan, filtros, documento=doc, seccion=VIAS_SECTION)
+            if best:
+                slots.append(best)
+
+    # 5. Una fuente por subconsulta.
     for subquery in plan.subconsultas:
         best = _best(retriever, subquery, plan, _filtros(filtros, plan))
         if best:

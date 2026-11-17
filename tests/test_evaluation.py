@@ -124,8 +124,26 @@ def test_summary_counts_abstention_and_type():
     assert set(by_type) == {"borde", "lookup", "negativa"}
 
 
+def test_diff_gold_set_is_well_formed():
+    from nts_rag.catalogo import CANONICAL_FIELDS, VACUNA_SLUGS
+    from nts_rag.rag.fichas import DIFF_CLASSES
+
+    rows = [
+        json.loads(line)
+        for name in ("diff.jsonl", "diff_control.jsonl", "diff_control2.jsonl")
+        for line in (EVAL_DIR / name).read_text("utf-8").splitlines()
+    ]
+    assert rows
+    for row in rows:
+        assert row["vacuna"] in VACUNA_SLUGS
+        assert row["campo"] in (*CANONICAL_FIELDS, "FICHA", "RESCATE")
+        assert row["esperado"] in DIFF_CLASSES
+
+
 def test_eval_files_are_well_formed():
     for path in sorted(EVAL_DIR.glob("*.jsonl")):
+        if path.name.startswith("diff"):
+            continue  # otro esquema: lo valida test_diff_gold_set_is_well_formed
         ids = set()
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():

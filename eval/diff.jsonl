@@ -1,0 +1,26 @@
+{"vacuna": "bcg", "campo": "DOSIS", "esperado": "cambio_real", "nota": "2022: según laboratorio; 2026: 0.05 ml <1 año y 0.1 ml >1 año"}
+{"vacuna": "bcg", "campo": "CONSERVACION", "esperado": "sin_cambio", "nota": "texto idéntico"}
+{"vacuna": "apo", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "desaparece la dosis de 6 meses; 2º refuerzo de 4 años a 4a11m29d"}
+{"vacuna": "rotavirus", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "redaccional", "nota": "mismo esquema 2 y 4 meses y límite 8m0d, explicitado"}
+{"vacuna": "neumococo", "campo": "COMPOSICION", "esperado": "cambio_real", "nota": "PCV13 → PCV20"}
+{"vacuna": "influenza", "campo": "CONTRAINDICACIONES", "esperado": "cambio_real", "nota": "se retira la alergia a proteínas del huevo"}
+{"vacuna": "spr", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "se retira población en riesgo 5–59 años; brote en todas las edades"}
+{"vacuna": "vph", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "dos dosis niñas 9–13 → dosis única 9–18 años niños y niñas"}
+{"vacuna": "hvb", "campo": "VIA_Y_SITIO", "esperado": "redaccional", "nota": "mismos sitios; sin la remisión al Anexo 5"}
+{"vacuna": "dt_adulto", "campo": "TIPO_DE_INMUNIZACION", "esperado": "redaccional", "nota": "'inactivadas o muertas' → 'inactivadas'"}
+{"vacuna": "tdap", "campo": "INDICACIONES", "esperado": "redaccional", "nota": "gestantes en ambos; 2026 explica el propósito"}
+{"vacuna": "ipv", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "2 dosis → 3 dosis + refuerzo 18 meses"}
+{"vacuna": "varicela", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "se añade 2ª dosis a los 24 meses"}
+{"vacuna": "ama", "campo": "CONSERVACION", "esperado": "redaccional", "nota": "mismas temperaturas y 6 horas"}
+{"vacuna": "hib", "campo": "TIPO_DE_INMUNIZACION", "esperado": "redaccional", "nota": "conjugada inactivada en ambos"}
+{"vacuna": "dpt", "campo": "JERINGAS", "esperado": "redaccional", "nota": "1 cc = 1 ml, misma aguja 25G x 1"}
+{"vacuna": "pentavalente", "campo": "CONSERVACION", "esperado": "redaccional", "nota": "'uso inmediato' → 'su uso es inmediato'"}
+{"vacuna": "hva", "campo": "DOSIS", "esperado": "sin_cambio", "nota": "0.5 ml"}
+{"vacuna": "influenza", "campo": "COMPOSICION", "esperado": "redaccional", "nota": "añade 'trivalente'; mismas cepas A(H1N1, H3N2) y B"}
+{"vacuna": "bcg", "campo": "VIA_Y_SITIO", "esperado": "redaccional", "nota": "intradérmica, deltoides derecho a 2 cm del acromion"}
+{"vacuna": "hexavalente", "campo": "FICHA", "esperado": "nuevo"}
+{"vacuna": "sr", "campo": "FICHA", "esperado": "nuevo"}
+{"vacuna": "vrs", "campo": "FICHA", "esperado": "nuevo"}
+{"vacuna": "hexavalente_vih", "campo": "FICHA", "esperado": "nuevo"}
+{"vacuna": "meningococo", "campo": "FICHA", "esperado": "nuevo"}
+{"vacuna": "mab_vrs", "campo": "FICHA", "esperado": "nuevo"}

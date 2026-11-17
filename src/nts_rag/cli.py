@@ -7,7 +7,9 @@ from collections import Counter
 from nts_rag.config import get_settings
 from nts_rag.evaluation import (
     RowResult,
+    citations_ok,
     contamination,
+    coverage,
     expected_sources,
     format_summary,
     row_type,
@@ -217,12 +219,14 @@ def cmd_evaluar(args: argparse.Namespace) -> None:
                 plan, evidence = plan_and_gather(retriever, question, k=max_k)
                 chunks = evidence.fuentes
                 result.contaminacion = contamination(plan, chunks[: ks[0]])
+                result.cobertura = coverage(row, chunks)
             for k in ks:
                 result.por_k[k] = score_retrieval(chunks, sources, k)
 
             if not args.sin_respuesta:
                 _, answer = run_query(settings, retriever, question, k=settings.top_k)
                 result.estado, result.motivo = _system_state(answer)
+                result.citas = citations_ok(row, answer.text)
                 reformulada = getattr(answer, "reformulacion", None)
                 if reformulada and sources:
                     result.reformulacion = score_retrieval(
@@ -261,6 +265,84 @@ def cmd_evaluar(args: argparse.Namespace) -> None:
     if n:
         hits = resumen[f"@{ks[0]}"]["hit"]
         print(f"\nHit@{ks[0]}: {hits}/{n} = {hits / n:.2f}")
+
+
+def _matrix():
+    from nts_rag.rag.fichas import Matrix
+
+    settings = get_settings()
+    return Matrix(load_chunks(settings.chunks_path))
+
+
+def _slug(value: str) -> str:
+    from nts_rag.catalogo import VACUNA_SLUGS, detect_vaccines
+
+    if value in VACUNA_SLUGS:
+        return value
+    found = detect_vaccines(value)
+    if not found:
+        raise SystemExit(f"Vacuna no reconocida: {value!r}. Slugs: {', '.join(VACUNA_SLUGS)}")
+    return found[0]
+
+
+def _campos(values: list[str] | None) -> list[str] | None:
+    from nts_rag.rag.fichas import FIELDS
+
+    if not values:
+        return None
+    campos = [value.upper() for value in values]
+    unknown = [campo for campo in campos if campo not in FIELDS]
+    if unknown:
+        raise SystemExit(f"Campos desconocidos: {unknown}. Válidos: {', '.join(FIELDS)}")
+    return campos
+
+
+def cmd_ficha(args: argparse.Namespace) -> None:
+    from nts_rag.rag.fichas import CURRENT, FIELD_LABELS, PREVIOUS, _cell_text, name
+
+    matrix, slug = _matrix(), _slug(args.vacuna)
+    doc = PREVIOUS if args.norma == "2022" else CURRENT
+    print(f"# {name(slug)} — {'NTS 196-2022' if doc == PREVIOUS else 'NTS 246-2026'}\n")
+    for campo, cell, status in matrix.ficha(slug, doc):
+        print(f"- **{FIELD_LABELS[campo]}**: {_cell_text(cell, status, 400)}")
+
+
+def cmd_comparar(args: argparse.Namespace) -> None:
+    from nts_rag.rag.fichas import CURRENT, PREVIOUS, render_compare
+    from nts_rag.rag.structured import DEFAULT_COMPARE
+
+    matrix = _matrix()
+    doc = PREVIOUS if args.norma == "2022" else CURRENT
+    slugs = [_slug(value) for value in args.vacunas]
+    table, _ = render_compare(matrix, slugs, _campos(args.campo) or DEFAULT_COMPARE, doc)
+    print(table)
+
+
+def cmd_diff(args: argparse.Namespace) -> None:
+    from nts_rag.rag.fichas import render_diff
+
+    matrix = _matrix()
+    if args.evaluar:
+        for path in args.evaluar:
+            rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+            nuevas = {row.slug: row.clase for row in matrix.catalog_diff()}
+            hits = 0
+            for row in rows:
+                if row["campo"] == "FICHA":
+                    got = nuevas.get(row["vacuna"], "sin_cambio")
+                else:
+                    got = matrix.diff_cell(row["vacuna"], row["campo"]).clase
+                hits += got == row["esperado"]
+                if got != row["esperado"]:
+                    print(f"[FALLA] {row['vacuna']}/{row['campo']}: {got} ≠ {row['esperado']}")
+            print(f"{path}: precisión {hits}/{len(rows)} = {hits / len(rows):.2f}")
+        return
+    if args.vacuna:
+        rows = matrix.diff(_slug(args.vacuna), _campos(args.campo))
+        table, _ = render_diff(rows, only_changes=args.solo_cambios)
+    else:
+        table, _ = render_diff(matrix.catalog_diff())
+    print(table)
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -395,6 +477,26 @@ def build_parser() -> argparse.ArgumentParser:
     servir.add_argument("--port", type=int, default=8000)
     servir.add_argument("--reload", action="store_true")
     servir.set_defaults(func=cmd_servir)
+
+    ficha = sub.add_parser("ficha", help="Los 13 campos de una vacuna, con cita por celda")
+    ficha.add_argument("vacuna", help="slug (bcg, spr…) o nombre")
+    ficha.add_argument("--norma", choices=["2026", "2022"], default="2026")
+    ficha.set_defaults(func=cmd_ficha)
+
+    comparar = sub.add_parser("comparar", help="Tabla de varias vacunas × campos")
+    comparar.add_argument("vacunas", nargs="+")
+    comparar.add_argument("--campo", nargs="+", help="Campos canónicos (por defecto, 7)")
+    comparar.add_argument("--norma", choices=["2026", "2022"], default="2026")
+    comparar.set_defaults(func=cmd_comparar)
+
+    diff = sub.add_parser("diff", help="Cambios entre la NTS 196-2022 y la NTS 246-2026")
+    diff.add_argument("vacuna", nargs="?", help="Sin vacuna: fichas nuevas y eliminadas")
+    diff.add_argument("--campo", nargs="+")
+    diff.add_argument("--solo-cambios", action="store_true")
+    diff.add_argument(
+        "--evaluar", nargs="+", metavar="JSONL", help="Precisión frente a un set etiquetado"
+    )
+    diff.set_defaults(func=cmd_diff)
 
     doctor = sub.add_parser("doctor", help="Comprueba qué falta para consultar")
     doctor.set_defaults(func=cmd_doctor)

@@ -61,7 +61,7 @@ class Conflicto(BaseModel):
 class ConsultaResponse(BaseModel):
     respuesta: str
     fuentes: list[Fuente]
-    modo: Literal["llm", "extractivo"]
+    modo: Literal["llm", "extractivo", "estructurado"]
     # Contrato de estado (§7.3): lo decide el código, no el LLM.
     estado: Literal["respondida", "parcial", "abstenida", "aclaracion"] = "respondida"
     motivo: (

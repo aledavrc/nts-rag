@@ -1,0 +1,24 @@
+{"vacuna": "hvb", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "12 h ideal / 24 h máximo, hasta 7 días en partos domiciliarios"}
+{"vacuna": "hvb", "campo": "CONSERVACION", "esperado": "sin_cambio"}
+{"vacuna": "pentavalente", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "pentavalente", "campo": "COMPOSICION", "esperado": "cambio_real", "nota": "toxoide tetánico 5 Lf → ≥ 2.5 Lf"}
+{"vacuna": "dt_pediatrico", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "se retira 'en ningún caso se reinicia el esquema'; 2 meses → 8 semanas"}
+{"vacuna": "dt_pediatrico", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "hib", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "2 primarias + 2 refuerzos en RAM"}
+{"vacuna": "hib", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "ipv", "campo": "VIA_Y_SITIO", "esperado": "redaccional", "nota": "mismos sitios; añade 'tercio medio' y quita la remisión"}
+{"vacuna": "apo", "campo": "CONSERVACION", "esperado": "cambio_real", "nota": "añade 4 semanas tras abrir el frasco"}
+{"vacuna": "rotavirus", "campo": "COMPOSICION", "esperado": "redaccional", "nota": "misma cepa RIX 4414 y título; añade volumen y células Vero"}
+{"vacuna": "neumococo", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real"}
+{"vacuna": "spr", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "varicela", "campo": "CONTRAINDICACIONES", "esperado": "sin_cambio"}
+{"vacuna": "ama", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "dt_adulto", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "redaccional", "nota": "mismas 3 dosis 0-2-6 meses y refuerzo cada 10 años; gestante remite a su esquema"}
+{"vacuna": "tdap", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "añade personal de salud y mayores de 7 años en brote"}
+{"vacuna": "hva", "campo": "CONTRAINDICACIONES", "esperado": "sin_cambio"}
+{"vacuna": "influenza", "campo": "DOSIS", "esperado": "movido", "nota": "el esquema que traía el campo en 2022 ya no está; mismos volúmenes"}
+{"vacuna": "vph", "campo": "VIA_Y_SITIO", "esperado": "sin_cambio", "nota": "solo se quita la remisión al Anexo 5"}
+{"vacuna": "hvb", "campo": "RESCATE", "esperado": "cambio_real", "nota": "añade pediátrica de 4 meses a 19 años y adulto desde 20"}
+{"vacuna": "ipv", "campo": "RESCATE", "esperado": "cambio_real", "nota": "hasta 4 años 0 días → 6 años 11 meses 29 días"}
+{"vacuna": "spr", "campo": "RESCATE", "esperado": "cambio_real", "nota": "intervalo 4 semanas → 6 meses; 5a0d → 4a11m29d"}
+{"vacuna": "varicela", "campo": "RESCATE", "esperado": "cambio_real", "nota": "añade dos dosis con 12 meses de intervalo"}

@@ -1,0 +1,20 @@
+{"vacuna": "hvb", "campo": "DOSIS", "esperado": "cambio_real", "nota": "edades 7–15 / >16 → hasta 19 años / desde 20"}
+{"vacuna": "pentavalente", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "redaccional", "nota": "mismas 3 dosis 2, 4, 6 meses e intervalo"}
+{"vacuna": "dt_pediatrico", "campo": "CONSERVACION", "esperado": "sin_cambio"}
+{"vacuna": "hib", "campo": "VIA_Y_SITIO", "esperado": "cambio_real", "nota": "deltoides 'de 2 a 7 años 0 días' → 'mayor de 2 años'"}
+{"vacuna": "ipv", "campo": "COMPOSICION", "esperado": "redaccional", "nota": "mismos antígenos y unidades; 2026 detalla excipientes"}
+{"vacuna": "apo", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "rotavirus", "campo": "CONTRAINDICACIONES", "esperado": "cambio_real", "nota": "añade evaluar en diarrea aguda o vómitos"}
+{"vacuna": "spr", "campo": "CONTRAINDICACIONES", "esperado": "sin_cambio"}
+{"vacuna": "varicela", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "ama", "campo": "CONTRAINDICACIONES", "esperado": "cambio_real", "nota": "se retiran menores de 15 meses y la excepción de 9 meses"}
+{"vacuna": "dpt", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "movido", "nota": "el límite 'menores de 7 años' pasa a la remisión al Anexo 2"}
+{"vacuna": "tdap", "campo": "DOSIS", "esperado": "sin_cambio"}
+{"vacuna": "hva", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "sin_cambio"}
+{"vacuna": "vph", "campo": "COMPOSICION", "esperado": "cambio_real", "nota": "tetravalente → nonavalente"}
+{"vacuna": "influenza", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real"}
+{"vacuna": "bcg", "campo": "CONTRAINDICACIONES", "esperado": "cambio_real"}
+{"vacuna": "ama", "campo": "ESQUEMA_DE_VACUNACION", "esperado": "cambio_real", "nota": "hasta 59 años → viaje 10 días antes, antes de 60"}
+{"vacuna": "bcg", "campo": "RESCATE", "esperado": "cambio_real", "nota": "12 meses / 5 años 0 días → 11m29d / 4a11m29d"}
+{"vacuna": "apo", "campo": "RESCATE", "esperado": "redaccional", "nota": "'menores de 5 años' = 'hasta 4 años 11 meses 29 días'"}
+{"vacuna": "rotavirus", "campo": "RESCATE", "esperado": "sin_cambio"}
