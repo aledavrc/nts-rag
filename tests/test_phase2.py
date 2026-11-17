@@ -10,7 +10,7 @@ from nts_rag.config import Settings
 from nts_rag.index import load_chunks
 from nts_rag.rag import answer as answer_mod
 from nts_rag.rag.abstain import check_shared_allergen, find_conflicts, judge
-from nts_rag.rag.answer import render_citations, run_query
+from nts_rag.rag.answer import plan_and_gather, render_citations, run_query
 from nts_rag.rag.evidence import _foreign_ficha, expand_context, gather_evidence
 from nts_rag.rag.interpret import (
     PLAN_SYSTEM,
@@ -77,6 +77,20 @@ def test_age_question_keeps_the_named_vaccine_ficha(corpus):
     question = "¿Se le puede poner la primera dosis de rotavirus a un niño de 12 meses?"
     evidence = gather_evidence(_Retriever(corpus), question, deterministic_plan(question))
     assert any(c.seccion_numero == "6.1.1.9" for c in evidence.fuentes)
+
+
+def test_age_rescate_context_includes_the_rescue_limits(corpus):
+    """El redactor necesita los 13 límites del Anexo 2, no solo la fila buscada."""
+
+    question = "¿Qué vacunas debe tener un menor de 5 años que no ha recibido vacunas previas?"
+    plan, evidence = plan_and_gather(_Retriever(corpus), question)
+    assert plan.edad_meses is not None and plan.rescate
+    limits = [
+        chunk
+        for chunk in evidence.contexto
+        if chunk.metadata.get("vacuna_slug") and "rescate" in chunk.seccion.lower()
+    ]
+    assert len(limits) >= 10
 
 
 def test_subqueries_split_only_between_questions():

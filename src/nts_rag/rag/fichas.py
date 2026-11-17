@@ -446,6 +446,19 @@ def render_list(title: str, cells: list[Cell], campo: str) -> str:
     return "\n".join(lines)
 
 
+def render_field_table(matrix: Matrix, campo: str, doc: str = CURRENT) -> tuple[str, list[Cell]]:
+    """Un campo de las 24 fichas, incluidas las que no lo declaran."""
+
+    lines = [f"| Vacuna | {FIELD_LABELS[campo]} |", "| --- | --- |"]
+    cells = []
+    for slug in matrix.slugs(doc):
+        cell = matrix.get(slug, campo, doc)
+        if cell:
+            cells.append(cell)
+        lines.append(f"| {name(slug)} | {_cell_text(cell, matrix.status(slug, campo, doc), 220)} |")
+    return "\n".join(lines), cells
+
+
 def render_sites(matrix: Matrix, doc: str = CURRENT) -> tuple[str, list[Cell]]:
     """Vía y sitio de las 24 fichas, agrupadas por sitio (muslo, deltoides, boca)."""
 

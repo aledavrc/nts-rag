@@ -8,11 +8,12 @@ from typing import Any
 
 import httpx
 
+from nts_rag.catalogo import detect_vaccines
 from nts_rag.config import Settings
 from nts_rag.rag.abstain import Verdict, judge
 from nts_rag.rag.citations import citation, document_label, pages
 from nts_rag.rag.evidence import Evidence, gather_evidence
-from nts_rag.rag.fichas import get_matrix
+from nts_rag.rag.fichas import CURRENT, PREVIOUS, RESCATE, get_matrix
 from nts_rag.rag.formatting import clip_markdown, format_chunk_markdown
 from nts_rag.rag.interpret import Plan, deterministic_plan, plan_query
 from nts_rag.rag.retrieve import RetrievedChunk, Retriever
@@ -37,7 +38,8 @@ _BUDGET: contextvars.ContextVar[int | None] = contextvars.ContextVar(
 # estima a 4 caracteres por token y se reservan ~600 tokens para el prompt.
 TOKEN_BUDGET = {
     "lookup": 2000,
-    "edad": 4000,
+    # La ruta de edad añade los 13 límites de rescate del Anexo 2.
+    "edad": 6000,
     "conjunto": 6000,
     "comparacion": 6000,
     "comparacion_normas": 6000,
@@ -135,6 +137,11 @@ Cada fragmento empieza con una etiqueta [c1], [c2]… Cita cada afirmación con 
 fragmento que la sustenta, por ejemplo [c2] o [c1][c3]. No escribas tú las páginas, las
 secciones ni el nombre de la norma: el sistema sustituye las etiquetas por la cita exacta.
 Si un fragmento pertenece a una norma derogada, dilo expresamente y no lo presentes como vigente.
+Contesta todas las partes de la pregunta, incluidas las que piden lo que NO cumple una
+condición (por ejemplo, qué vacunas no son recuperables); si una parte no consta, dilo.
+Sé breve: no copies tablas completas ni listas largas si la pregunta se responde con lo esencial.
+Si la pregunta usa un rango de edad ("menor de 5 años"), no conviertas un límite en una
+conclusión absoluta: di desde o hasta qué edad se aplica.
 No inventes edades, dosis, intervalos, vías, temperaturas ni contraindicaciones.
 No completes información con conocimiento general.
 Si los fragmentos no contienen la respuesta, responde exactamente:
@@ -151,6 +158,20 @@ pregunta. Ejemplo: [3, 1, 2]. No expliques nada ni añadas texto.
 
 VERIFY_SYSTEM = """Verifica si la respuesta se apoya en los fragmentos. Las tablas o listas \
 resumidas de ellos cuentan como apoyo. Responde solo "OK" o "NO".
+"""
+
+STRUCTURED_SYSTEM = """Eres un redactor documental especializado en la normativa de vacunación \
+del Perú. Recibes una pregunta y un resultado ya resuelto (tabla o lista) con sus citas.
+Redacta la respuesta directa en español, en Markdown.
+Reglas:
+- Contesta exactamente lo que pide la pregunta, en el orden en que lo pide. Si pide varias
+  partes, responde todas, incluidas las negaciones ("cuáles no...").
+- No añadas campos, vacunas ni datos que no estén en el resultado.
+- Conserva las citas tal como aparecen; no inventes páginas, secciones ni normas.
+- No inventes números, edades, dosis, temperaturas ni intervalos.
+- Si una parte de la pregunta no consta en el resultado, dilo expresamente.
+- Si el resultado es una tabla de comparación o de cambios, conserva todas sus filas.
+- No repitas la tabla entera si la pregunta se responde con una lista breve.
 """
 
 # Instrucción para el redactor según el veredicto: el código decide el estado; el
@@ -375,22 +396,80 @@ def rerank_with_llm(
 
 
 def _verify_grounded(
-    settings: Settings, query: str, answer: str, chunks: list[RetrievedChunk]
+    settings: Settings,
+    query: str,
+    answer: str,
+    chunks: list[RetrievedChunk],
+    *,
+    source_text: str | None = None,
 ) -> bool:
     """Comprueba con el LLM que la respuesta se apoya en los fragmentos."""
 
     if not settings.verify or not settings.llm_base_url:
         return True
+    sources = source_text if source_text is not None else _context(chunks, 12_000)
     verdict = _chat(
         settings,
         VERIFY_SYSTEM,
-        (
-            f"Pregunta: {query}\n\nRespuesta:\n{answer}\n\n"
-            f"Fragmentos fuente:\n{_context(chunks, 12_000)}"
-        ),
+        f"Pregunta: {query}\n\nRespuesta:\n{answer}\n\nFragmentos fuente:\n{sources}",
         max_tokens=5,
     )
     return (verdict or "").strip().upper().startswith("OK")
+
+
+_LIST_KINDS = {
+    "lista_campo",
+    "sin_jeringa",
+    "filtro",
+    "sitios",
+    "valencias",
+    "comparacion",
+    "diff",
+    "diff_catalogo",
+}
+
+
+def _numbers(text: str) -> set[str]:
+    """Números de un texto, sin los marcadores de lista de Markdown."""
+
+    body = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
+    return {number.replace(",", ".") for number in re.findall(r"\d+(?:[.,]\d+)?", body)}
+
+
+def _numbers_grounded(answer: str, source: str) -> bool:
+    return _numbers(answer) <= _numbers(source)
+
+
+def _covers_cells(answer: str, cells: list) -> bool:
+    """En una lista, cada vacuna de las celdas debe aparecer en la redacción."""
+
+    if not cells:
+        return True
+    mentioned = set(detect_vaccines(answer))
+    words = set(tokenize(answer))
+    for cell in cells:
+        if cell.slug in mentioned:
+            continue
+        significant = {token for token in tokenize(cell.slug.replace("_", " ")) if len(token) >= 4}
+        if not significant or not significant <= words:
+            return False
+    return True
+
+
+def _llm_structured(settings: Settings, query: str, structured: Structured) -> AnswerResult | None:
+    """Redacta una respuesta estructurada; None si no hay LLM o no hay celdas."""
+
+    if not settings.llm_base_url or not structured.cells:
+        return None
+    text = _chat(
+        settings,
+        STRUCTURED_SYSTEM,
+        f"Pregunta: {query}\n\nResultado ya resuelto:\n{structured.text}",
+        max_tokens=2000,
+    )
+    if not text or text.strip() == NO_ANSWER:
+        return None
+    return AnswerResult(text=text.strip(), mode="estructurado")
 
 
 def _llm_answer(
@@ -408,6 +487,14 @@ def _llm_answer(
         extra += "\nDiscrepancias detectadas: " + "; ".join(
             " vs ".join(c["valores"]) for c in verdict.conflictos
         )
+    if plan and plan.subconsultas:
+        extra += "\nPartes de la pregunta: " + " | ".join(plan.subconsultas)
+    if plan and plan.edad_meses is not None and plan.rescate:
+        extra += (
+            "\nResponde qué vacunas son recuperables y cuáles no, con los límites de edad "
+            "del Anexo 2; si una vacuna no consta, dilo."
+        )
+    answer_tokens = 1800 if plan and plan.edad_meses is not None and plan.rescate else 900
     text = _chat(
         settings,
         SYSTEM_PROMPT,
@@ -415,6 +502,7 @@ def _llm_answer(
         f"Fragmentos disponibles:\n{_context(chunks, context_chars(plan))}\n\n"
         f"{instruction}{extra}\n"
         "Responde citando con las etiquetas [cN].",
+        max_tokens=answer_tokens,
     )
     if not text:
         return None
@@ -481,17 +569,26 @@ def generate_answer(
 
     notes = _notes(verdict, plan)
 
-    # Ruta estructurada (comparación, lista, diff, valencias): plantilla con cita
-    # por celda y 0 llamadas (§8.3). Si la pregunta tenía otra parte (subconsulta),
-    # se añade su fragmento.
+    # Ruta estructurada: la tabla/lista de la matriz es la fuente de verdad y el
+    # LLM la redacta. Si no hay LLM, no verifica, omite una vacuna de la lista o
+    # introduce un número que no está en la plantilla, se devuelve la plantilla.
     if structured is not None:
-        parts = [*notes, "" if notes else None, structured.text]
-        cell_ids = {cell.chunk["id"] for cell in structured.cells}
-        extra = [c for c in chunks if c.id not in cell_ids]
-        if structured.cells and plan.subconsultas and extra:
-            fragment = _extractive(extra[:1]).text
-            parts += ["", fragment.replace("**Según la normativa cargada:**", "**Además:**")]
-        text = "\n".join(part for part in parts if part is not None).strip()
+        result = _llm_structured(settings, query, structured)
+        if result is not None:
+            grounded = _verify_grounded(
+                settings, query, result.text, [], source_text=structured.text
+            )
+            covered = structured.kind not in _LIST_KINDS or _covers_cells(
+                result.text, structured.cells
+            )
+            if grounded and covered and _numbers_grounded(result.text, structured.text):
+                if notes:
+                    result.text = "\n".join(notes) + "\n\n" + result.text
+                return finish(result)
+            logger.warning("Redacción estructurada no verificada; se usa la plantilla")
+        text = "\n".join(
+            part for part in (*notes, "" if notes else None, structured.text) if part is not None
+        ).strip()
         return finish(AnswerResult(text=text, mode="estructurado"))
 
     result = _llm_answer(settings, query, context, verdict, plan)
@@ -606,4 +703,15 @@ def plan_and_gather(
         limit = min(max(k, len(cell_sources)), MAX_STRUCTURED_SOURCES)
         evidence.fuentes = (cell_sources + rest)[:limit]
         evidence.estructurada = structured
+    # Una pregunta de edad con rescate necesita los límites de todas las vacunas,
+    # no solo las filas que trajo la búsqueda: van primero en el contexto.
+    if plan.edad_meses is not None and plan.rescate:
+        matrix = get_matrix(retriever)
+        doc = PREVIOUS if plan.version == "derogada" else CURRENT
+        limits = [matrix.get(slug, RESCATE, doc) for slug in matrix.slugs(doc)]
+        limit_chunks = [cell.retrieved for cell in limits if cell is not None]
+        seen = {chunk.id for chunk in evidence.contexto}
+        evidence.contexto = [
+            chunk for chunk in limit_chunks if chunk.id not in seen
+        ] + evidence.contexto
     return plan, evidence

@@ -115,7 +115,7 @@ def test_token_budget_depends_on_intent():
     lookup = context_chars(deterministic_plan("¿Cuál es la dosis de la vacuna Tdap?"))
     edad = context_chars(deterministic_plan("¿Qué vacunas le tocan a un niño de 5 años?"))
     assert lookup == (2000 - 600) * 4
-    assert edad == (4000 - 600) * 4
+    assert edad == (6000 - 600) * 4
     assert context_chars(None) == (12_000 - 600) * 4
 
 

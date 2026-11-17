@@ -21,6 +21,7 @@ from nts_rag.catalogo import NO_APLICA
 from nts_rag.rag.fichas import (
     CURRENT,
     FIELD_LABELS,
+    FIELDS,
     PREVIOUS,
     RESCATE,
     TIPO_LABELS,
@@ -30,6 +31,7 @@ from nts_rag.rag.fichas import (
     name,
     render_compare,
     render_diff,
+    render_field_table,
     render_list,
     render_sites,
     render_valences,
@@ -59,6 +61,9 @@ PROPERTY_FIELDS = {
     "EFECTOS_POSTVACUNALES",
     "INDICACIONES",
 }
+# "¿Cuál es la dosis/composición de cada vacuna?": el campo de las 24 fichas,
+# sin filtrar por valor. Incluye RESCATE (Anexo 2).
+LIST_FIELDS = set(FIELDS)
 # Palabras que nombran el campo o la pregunta, no la propiedad buscada.
 _FIELD_WORDS = {
     token
@@ -142,11 +147,10 @@ def _filter_answer(plan: Plan, matrix: Matrix) -> Structured | None:
 
 
 def _list_all_field(plan: Plan, matrix: Matrix, campo: str) -> Structured | None:
-    cells = matrix.filter(campo, _doc(plan), lambda _: True)
+    table, cells = render_field_table(matrix, campo, _doc(plan))
     if not cells:
         return None
-    title = f"{FIELD_LABELS[campo]} de cada vacuna"
-    return Structured("lista_campo", render_list(title, cells, campo), cells)
+    return Structured("lista_campo", table, cells)
 
 
 def _no_jeringa(plan: Plan, matrix: Matrix) -> Structured | None:
@@ -232,12 +236,20 @@ def structured_answer(plan: Plan, matrix: Matrix) -> Structured | None:
 
     # "¿Cuál es la conservación de todas las vacunas?" / "…de cada vacuna": lista
     # completa del campo. "¿Qué vacunas no usan jeringa?": las orales del catálogo.
-    campos = [campo for campo in plan.campos if campo in PROPERTY_FIELDS]
-    if not plan.entidades and campos:
+    campos = [campo for campo in plan.campos if campo in LIST_FIELDS]
+    asks_rescate = bool(re.search(r"\brescate\b", question))
+    if not plan.entidades and (campos or asks_rescate):
         if "JERINGAS" in campos and _NO_JERINGA_RE.search(question):
             return _no_jeringa(plan, matrix)
         if _LIST_ALL_RE.search(question):
-            return _list_all_field(plan, matrix, campos[0])
+            if asks_rescate:
+                return _list_all_field(plan, matrix, RESCATE)
+            if campos:
+                campo = next(
+                    (c for c in campos if normalize_for_match(FIELD_LABELS[c]) in question),
+                    campos[0],
+                )
+                return _list_all_field(plan, matrix, campo)
 
     if plan.intencion == "global" and not plan.entidades:
         return _filter_answer(plan, matrix)

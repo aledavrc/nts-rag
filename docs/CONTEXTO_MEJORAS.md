@@ -440,8 +440,8 @@ Los embeddings y Chroma son locales: el coste API es solo LLM.
 `(pregunta normalizada, schema_version, hashes)`. **No** caché semántica por similitud:
 dos preguntas parecidas pueden tener intenciones distintas.
 
-**Presupuesto por intención:** lookup 2k, edad 4k, comparación 6k, global 8k, abierta
-12k, fuera de alcance 0. Si se excede, `parcial`.
+**Presupuesto por intención:** lookup 2k, edad 6k, comparación 6k, global 8k, abierta
+12k, fuera de alcance 0. Si se excede, se recorta el contexto (no marca `parcial`).
 
 **Medición:** `usage` por llamada, `--explicar` con plan/tokens/ruta y promedio por
 tipo en `evaluar`.
@@ -654,6 +654,22 @@ Umbrales de Fase 3:
 | llamadas por consulta | ≤ 3 | **≤ 3 garantizado** por `_chat` (tope duro por consulta). Peor caso probado con LLM simulado: plan inválido → sin reintento ni re-rankeo, redacción + verificación = 3. Sin LLM: 0 en las 52 preguntas ✅ |
 | sustitución silenciosa | 0 | **0/52** ✅ (vacuna nombrada sin fuente propia respondida como tal, o reformulación no mostrada) |
 
+**Resultado Fase 5** (2026-11-17): toda respuesta estructurada pasa por el LLM antes
+de mostrarse. La matriz sigue siendo la fuente de verdad y la plantilla el respaldo.
+
+- El eval completo no cambia: **52/52 estados**, 0 sustitución, 0 contaminación,
+  recall@10 0.99 y cobertura 6/6.
+- Coste: **2,65 llamadas** y **6.537 tokens** por consulta; las estructuradas hacen
+  3 llamadas. Con DeepSeek Flash: **~$1,33/1.000 consultas off-peak** y **~$2,67 en
+  peak**; a 1.000/mes, **~$1,33–$2,67**.
+- La redacción cae a la plantilla si la verificación falla, si omite una vacuna de
+  una lista o si introduce un número que no está en la tabla.
+- Se generaliza “campo de cada vacuna” (dosis, composición, conservación, rescate) a
+  las 24 fichas y se elimina el bloque “Además”. La pregunta de edad con rescate
+  recibe los 13 límites del Anexo 2 y responde también las “no recuperables” con
+  umbrales de edad.
+- `pytest`: 183; `ruff` limpio; diff 0,92 / 0,90 / 0,92.
+
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Fase 1 | recall@10 agregación | ≥ 0.80 |
@@ -668,6 +684,9 @@ Umbrales de Fase 3:
 | Fase 3 | abstención en negativas | 5/5 |
 | Fase 4 | llamadas por consulta | ≤ 3 |
 | Fase 4 | sustitución silenciosa | 0 |
+| Fase 5 | respuestas estructuradas | 3 llamadas · plantilla de respaldo |
+| Fase 5 | sustitución silenciosa con LLM | 0/52 |
+| Fase 5 | coste | 2,65 llamadas · 6.537 tokens (Flash ~$1,33/1k off-peak) |
 
 ---
 
@@ -821,7 +840,7 @@ Plan original: `fichas.py` (matriz, valores canónicos, operaciones), `entidades
 | Pieza | Cambio aplicado |
 |---|---|
 | Presupuesto de llamadas | `NTS_RAG_LLM_MAX_CALLS` (3). `_chat` rechaza cualquier llamada por encima del tope de la consulta y cuenta también las fallidas. Se reservan la redacción y la verificación; el plan usa lo que queda (con 3 y verificación: un intento, sin reintento). El re-rankeo solo entra si el plan del LLM falló **y** cabe. |
-| Presupuesto de tokens | El contexto del redactor se limita por intención (§8.3: lookup 2k, edad 4k, comparación 6k, global 8k, resto 12k; 600 para el prompt). Las rutas estructuradas cuestan 0. |
+| Presupuesto de tokens | El contexto del redactor se limita por intención (§8.3: lookup 2k, edad 6k, comparación 6k, global 8k, resto 12k; 600 para el prompt). Las rutas estructuradas costaban 0 en la Fase 4; desde la Fase 5 hacen redacción + verificación. |
 | Sustitución silenciosa | Regla en el veredicto: si la pregunta nombra una vacuna sin ninguna fuente propia, `parcial`/`evidencia_insuficiente` y se nombra. Métrica `sustitucion_silenciosa` en `evaluar` (también reformulación no mostrada). |
 | Coste en `evaluar` | Media y máximo de llamadas y tokens por consulta. |
 | Registro de consultas | `NTS_RAG_QUERY_LOG` (desactivado por defecto): una línea JSONL por `/consulta` con estado, motivo, intención, fuentes, llamadas, tokens y tiempo. `logs/` en `.gitignore`. |
@@ -845,10 +864,38 @@ Plan original: `fichas.py` (matriz, valores canónicos, operaciones), `entidades
   correrá en Python 3.12 (Linux). En este equipo el Python 3.12 de uv no se pudo
   instalar (fallo de uv en Windows), así que el entorno limpio se validó con 3.13.
 - **Sigue sin medirse la ruta LLM con un modelo real**: plan, redacción `[cN]`,
-  verificación y conteo de tokens están probados con un LLM simulado.
+  verificación y conteo de tokens están probados con un LLM simulado. (La Fase 5
+  la midió con DeepSeek Flash.)
 
 Plan original: tests, CI, `uv.lock`, pre-commit, log de consultas, medición de
 tokens, re-ranker local si el eval lo pide, auth si se expone.
+
+### Fase 5 — Redacción con LLM de respuestas estructuradas ✅
+
+**Hecho** (resultados en §9.3):
+
+| Pieza | Cambio aplicado |
+|---|---|
+| Redacción | `generate_answer` envía la tabla/lista de la matriz a `STRUCTURED_SYSTEM`; el LLM redacta la respuesta y conserva las citas. |
+| Verificación | Se verifica contra el texto estructurado (no contra fragmentos sueltos), se comprueba que todo número de la respuesta aparezca en la tabla y que cada vacuna de una lista esté nombrada. Si algo falla, se devuelve la plantilla. |
+| Listas de campo | `LIST_FIELDS` = todos los campos de ficha + `RESCATE`; tabla de las 24 fichas con `no consta`/`no aplica`. Cubre dosis, composición, conservación y dosis de rescate de cada vacuna. |
+| Edad + rescate | Los 13 límites del Anexo 2 se anteponen al contexto del redactor; la pregunta “no recuperables” se responde con umbrales de edad. |
+| Ruido | Se elimina el bloque “Además” de las respuestas estructuradas. |
+| Tests | 183 (eran 176): redacción estructurada, respaldo por verificación/cobertura/números, listas de campo y límites de rescate. |
+
+**Decisiones tomadas:**
+
+- La respuesta negativa del diff de catálogo (“No existen…”) no tiene celdas que
+  verificar y se mantiene determinista.
+- El presupuesto sigue en 3 llamadas: plan + redacción + verificación. Sin LLM o
+  sin verificación, la plantilla es la salida.
+- El redactor de edad tiene 1.800 tokens de salida para que quepan todas las partes
+  de la pregunta; el resto, 900.
+- La comprobación numérica es conservadora: si el LLM reformula una cifra que no
+  aparece literalmente en la tabla, se usa la plantilla.
+
+Plan original: redactar las respuestas estructuradas con el LLM, verificar contra la
+matriz, generalizar las listas de campo y responder los umbrales de rescate.
 
 ### Complementarias
 

@@ -19,7 +19,7 @@ from nts_rag.rag.fichas import (
     remissions,
     valence,
 )
-from nts_rag.rag.interpret import deterministic_plan
+from nts_rag.rag.interpret import PLAN_SYSTEM, deterministic_plan
 from nts_rag.rag.structured import structured_answer
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,6 +163,9 @@ def test_diff_precision_does_not_regress(matrix, name, minimum):
         ("¿Cuál es la conservación de las vacunas?", "lista_campo", 24),
         ("¿Cuánto es el margen para la rotura de cadena de frío de cada vacuna?",
          "lista_campo", 24),
+        ("¿Cuál es la dosis de cada vacuna?", "lista_campo", 24),
+        ("¿Cuál es la composición de cada vacuna?", "lista_campo", 24),
+        ("¿Cuál es la dosis de rescate de cada vacuna?", "lista_campo", 13),
         ("¿Qué vacunas no usan jeringa?", "sin_jeringa", 2),
     ],
 )
@@ -196,18 +199,68 @@ def test_structured_cells_become_the_sources(corpus):
     assert slugs[:7] == ["bcg", "apo", "rotavirus", "spr", "sr", "varicela", "ama"]
 
 
-def test_structured_answer_costs_no_llm_call(corpus, monkeypatch):
+def test_structured_answer_falls_back_without_llm(corpus, monkeypatch):
     from nts_rag.rag import answer as answer_mod
 
     def no_chat(settings, system, user, **kwargs):
-        if system == answer_mod.SYSTEM_PROMPT:
-            raise AssertionError("una ruta estructurada no redacta con el LLM")
         return None
 
     monkeypatch.setattr(answer_mod, "_chat", no_chat)
     settings = Settings(llm_base_url="http://localhost/v1", _env_file=None)
-    _, result = run_query(
-        settings, _Retriever(corpus), "Compara la conservación de la vacuna SPR y la antiamarílica"
-    )
+    _, result = run_query(settings, _Retriever(corpus), "¿Qué vacunas no usan jeringa?")
     assert result.mode == "estructurado" and result.estado == "respondida"
-    assert "| Conservación |" in result.text
+    assert "APO" in result.text and "Además" not in result.text
+
+
+def _structured_chat(summary: str, verify: str = "OK"):
+    from nts_rag.rag import answer as answer_mod
+
+    def fake_chat(settings, system, user, **kwargs):
+        if system == PLAN_SYSTEM:
+            return "no es json"  # plan determinista
+        if system == answer_mod.STRUCTURED_SYSTEM:
+            return summary
+        if system == answer_mod.VERIFY_SYSTEM:
+            return verify
+        return None
+
+    return fake_chat
+
+
+def test_structured_answer_is_redacted_by_the_llm(corpus, monkeypatch):
+    from nts_rag.rag import answer as answer_mod
+
+    monkeypatch.setattr(
+        answer_mod,
+        "_chat",
+        _structured_chat("Las vacunas que no se administran con jeringa son la APO y rotavirus."),
+    )
+    settings = Settings(llm_base_url="http://localhost/v1", _env_file=None)
+    _, result = run_query(settings, _Retriever(corpus), "¿Qué vacunas no usan jeringa?")
+    assert result.mode == "estructurado"
+    assert result.text.startswith("Las vacunas")
+    assert "JERINGAS A UTILIZAR" not in result.text and "Además" not in result.text
+
+
+def test_structured_llm_omission_falls_back(corpus, monkeypatch):
+    from nts_rag.rag import answer as answer_mod
+
+    monkeypatch.setattr(answer_mod, "_chat", _structured_chat("La única vacuna oral es la APO."))
+    settings = Settings(llm_base_url="http://localhost/v1", _env_file=None)
+    _, result = run_query(settings, _Retriever(corpus), "¿Qué vacunas no usan jeringa?")
+    assert "rotavirus" in result.text  # plantilla completa
+    assert "La única" not in result.text
+
+
+def test_structured_llm_invented_number_falls_back(corpus, monkeypatch):
+    from nts_rag.rag import answer as answer_mod
+
+    monkeypatch.setattr(
+        answer_mod,
+        "_chat",
+        _structured_chat("La APO y la de rotavirus se conservan a 500 °C."),
+    )
+    settings = Settings(llm_base_url="http://localhost/v1", _env_file=None)
+    _, result = run_query(settings, _Retriever(corpus), "¿Qué vacunas no usan jeringa?")
+    assert "500" not in result.text
+    assert "rotavirus" in result.text  # plantilla

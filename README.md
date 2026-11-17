@@ -30,12 +30,13 @@ corpus/markdown/*.md
     → API FastAPI / CLI
 ```
 
-Estado actual (Fase 3): lookups 20/20, preguntas por edad y rescate con todas sus
-fuentes, comparaciones y listas completas desde la matriz de fichas, diff entre la
-NTS 196-2022 y la NTS 246-2026, y el estado correcto en las 52 preguntas del eval.
-La precisión del diff es 0,92 en un set etiquetado a ciegas (objetivo 0,90). El
-análisis y las siguientes fases están en
-[`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
+Estado actual (Fases 3 y 5): lookups 20/20, preguntas por edad y rescate con todas
+sus fuentes, comparaciones y listas completas desde la matriz de fichas, diff entre
+la NTS 196-2022 y la NTS 246-2026, y el estado correcto en las 52 preguntas del
+eval. Las respuestas estructuradas se redactan con el LLM a partir de la matriz,
+con verificación y vuelta a la plantilla si algo no cuadra. La precisión del diff es
+0,92 en un set etiquetado a ciegas (objetivo 0,90). El análisis y las siguientes
+fases están en [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
 
 La recuperación combina:
 
@@ -369,7 +370,7 @@ nts-rag/
 │       ├── evidence.py           # slots, diversidad y expansión de sección
 │       ├── abstain.py            # veredicto: estado, motivo, conflictos, premisas
 │       ├── fichas.py             # matriz vacuna × campo × versión y diff
-│       ├── structured.py         # respuestas por plantilla desde la matriz
+│       ├── structured.py         # respuestas estructuradas desde la matriz (redactadas por el LLM)
 │       ├── citations.py          # citas desde metadatos
 │       ├── answer.py             # pipeline, citas [cN], LLM opcional / extractivo
 │       └── formatting.py         # Markdown para respuestas
@@ -446,6 +447,13 @@ listas globales están completas (6/6) y la contradicción conocida sale con amb
 citas. La precisión del diff es 0,92 en el set de control ciego (22/24). El detalle
 está en
 [`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
+
+Con LLM configurado (Fase 5), el eval completo mantiene 52/52 estados, 0 sustitución
+y 0 contaminación; las respuestas estructuradas se redactan a partir de la matriz y
+cuestan 3 llamadas cada una. El conjunto mide 2,65 llamadas y 6.537 tokens por
+consulta. A 1.000 consultas/mes con DeepSeek Flash: ~$1,33 off-peak y ~$2,67 en hora
+peak (estimación; ver §9.3 del documento de mejoras).
+
 `tests/test_smoke_index.py` comprueba (en local y, cuando se active, en CI) la estructura del índice versionado
 (totales, fichas, campos, lint, IDs y frescura del manifiesto).
 
@@ -458,14 +466,15 @@ está en
 - El diff entre normas acierta 0,92 y, cuando falla, casi siempre sobreavisa
   (marca «cambió» en una redacción nueva). Revisa las celdas marcadas «cambió»
   antes de citarlas como cambio normativo.
-- Las respuestas por plantilla (tablas de la matriz) son exactas y citadas, pero no
-  redactadas.
+- Las respuestas estructuradas se redactan con el LLM; si la verificación, la
+  cobertura de una lista o la comprobación numérica fallan, se devuelve la plantilla
+  exacta. Esto añade hasta 3 llamadas y unos 2–4 s por consulta estructurada.
 - El veredicto usa reglas deterministas (catálogos, edades, alérgenos): una
   pregunta fuera de alcance que comparta vocabulario con la norma puede no
   abstenerse, y una discrepancia que no sea de edad no se detecta todavía.
-- El modo extractivo no redacta una síntesis; devuelve los fragmentos con su
-  cita. La ruta con LLM está probada con un LLM simulado, no medida con un modelo
-  real.
+- El modo extractivo no redacta una síntesis; la ruta con LLM sí, pero el eval mide
+  recuperación/estado, no la calidad de la redacción. La ruta con LLM se midió con
+  DeepSeek Flash (2026-11-17); el coste estimado es ~$1,33/1.000 consultas off-peak.
 - Una respuesta bien formada no garantiza la exactitud del dato clínico:
   contrasta siempre con el Markdown o el PDF original.
 
