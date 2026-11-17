@@ -149,6 +149,25 @@ def _split_clauses(question: str) -> list[str]:
     return parts
 
 
+def question_parts(question: str) -> list[str]:
+    """Partes literales de la pregunta, para que el redactor no invente secciones.
+
+    Si no hay puntuación entre dos preguntas ("… ¿Qué vacunas no son recuperables?"),
+    se corta antes del interrogativo que inicia la segunda.
+    """
+
+    parts = _split_clauses(question)
+    if len(parts) > 1:
+        return parts
+    # Sin puntuación, solo se corta ante un interrogativo con mayúscula inicial:
+    # "que no ha recibido" es una relativa, no otra pregunta.
+    pieces = re.split(
+        r"\s+(?=(?:Qué|Cuáles|Cuál|Cuándo|Cómo|Dónde|Cuánt[oa]s?)\b)",
+        question.strip(" ¿?"),
+    )
+    return [piece.strip(" ,") for piece in pieces if piece.strip(" ,")]
+
+
 def _field_words(campos: list[str]) -> str:
     return " ".join(campo.replace("_", " ").lower() for campo in campos)
 

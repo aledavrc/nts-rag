@@ -10,13 +10,14 @@ from nts_rag.config import Settings
 from nts_rag.index import load_chunks
 from nts_rag.rag import answer as answer_mod
 from nts_rag.rag.abstain import check_shared_allergen, find_conflicts, judge
-from nts_rag.rag.answer import plan_and_gather, render_citations, run_query
+from nts_rag.rag.answer import dedupe_citations, plan_and_gather, render_citations, run_query
 from nts_rag.rag.evidence import _foreign_ficha, expand_context, gather_evidence
 from nts_rag.rag.interpret import (
     PLAN_SYSTEM,
     Plan,
     deterministic_plan,
     plan_query,
+    question_parts,
     validate_plan,
 )
 from nts_rag.rag.retrieve import RetrievedChunk
@@ -103,6 +104,48 @@ def test_subqueries_split_only_between_questions():
     ]
     # "difteria y tétanos" es una sola vacuna: no se parte.
     assert deterministic_plan("¿Cuál es la dosis de difteria y tétanos?").subconsultas == []
+
+
+def test_question_parts_are_the_literal_clauses():
+    second = (
+        "¿Qué vacunas debe tener un menor de 5 años que no ha recibido vacunas previas? "
+        "¿Qué vacunas no son recuperables?"
+    )
+    assert question_parts(second) == [
+        "Qué vacunas debe tener un menor de 5 años que no ha recibido vacunas previas",
+        "Qué vacunas no son recuperables",
+    ]
+    both = (
+        "¿Qué vacunas debe tener un menor de 5 años que no ha recibido vacunas previas? "
+        "¿Qué vacunas se deben priorizar, cuáles son recuperables y cuáles no son recuperables?"
+    )
+    assert len(question_parts(both)) == 3
+
+
+def test_llm_prompt_uses_the_literal_parts(monkeypatch):
+    captured = {}
+
+    def fake_chat(settings, system, user, **kwargs):
+        captured["user"] = user
+        return "respuesta [c1]"
+
+    monkeypatch.setattr(answer_mod, "_chat", fake_chat)
+    settings = Settings(llm_base_url="http://localhost/v1", _env_file=None)
+    question = (
+        "¿Qué vacunas debe tener un menor de 5 años que no ha recibido vacunas previas? "
+        "¿Qué vacunas no son recuperables?"
+    )
+    answer_mod._llm_answer(
+        settings, question, [_chunk(13)], None, deterministic_plan(question)
+    )
+    prompt = captured["user"]
+    assert "Partes de la pregunta" in prompt
+    assert "no son recuperables" in prompt
+    assert "esquema de rescate" not in prompt.lower()
+
+
+def test_dedupe_citations_collapses_repeated_ones():
+    assert dedupe_citations("[A][A] texto [B] [B]") == "[A] texto [B]"
 
 
 def test_validator_rejects_values_outside_the_catalogs():
@@ -293,8 +336,8 @@ def test_placeholders_become_metadata_citations_and_memory_ones_are_dropped():
         chunks,
     )
     assert valid == 2
-    assert "[NTS N° 246-MINSA/DGIESP-2026, p. 13, sección 6.1.1.1]" in text
-    assert "(derogada), p. 50" in text
+    assert "[NTS 246-2026, p. 13, 6.1.1.1]" in text
+    assert "[NTS 196-2022, p. 50, 6.1.1.1]" in text
     assert "p. 99" not in text and "[c9]" not in text
 
 
@@ -330,7 +373,7 @@ def test_with_llm_the_plan_replaces_the_rerank(monkeypatch, corpus):
     assert result.llamadas == 3 and result.tokens_entrada == 300
     assert result.mode == "llm" and result.estado == "respondida"
     assert result.reformulacion == "Composición de la vacuna BCG"
-    assert "[NTS N° 246-MINSA/DGIESP-2026" in result.text
+    assert "[NTS 246-2026" in result.text
     assert chunks[0].campo == "COMPOSICION" and chunks[0].metadata["vacuna_slug"] == "bcg"
 
 

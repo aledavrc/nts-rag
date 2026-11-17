@@ -659,16 +659,20 @@ de mostrarse. La matriz sigue siendo la fuente de verdad y la plantilla el respa
 
 - El eval completo no cambia: **52/52 estados**, 0 sustitución, 0 contaminación,
   recall@10 0.99 y cobertura 6/6.
-- Coste: **2,65 llamadas** y **6.537 tokens** por consulta; las estructuradas hacen
-  3 llamadas. Con DeepSeek Flash: **~$1,33/1.000 consultas off-peak** y **~$2,67 en
-  peak**; a 1.000/mes, **~$1,33–$2,67**.
+- La pregunta de dos partes (“menor de 5 años … no recuperables”) baja de ~4,7k a
+  ~1,6k caracteres: esquema 0–4 en tabla, umbrales de no recuperables y sin listar
+  las recuperables que no se piden. Las fuentes se agrupan por sección y solo se
+  listan las que la respuesta cita.
+- Coste: **2,65 llamadas** y **6.214 tokens** por consulta; las estructuradas hacen
+  3 llamadas. Con DeepSeek Flash: **~$1,27/1.000 consultas off-peak** y **~$2,54 en
+  peak**; a 1.000/mes, **~$1,27–$2,54**.
 - La redacción cae a la plantilla si la verificación falla, si omite una vacuna de
   una lista o si introduce un número que no está en la tabla.
 - Se generaliza “campo de cada vacuna” (dosis, composición, conservación, rescate) a
   las 24 fichas y se elimina el bloque “Además”. La pregunta de edad con rescate
   recibe los 13 límites del Anexo 2 y responde también las “no recuperables” con
   umbrales de edad.
-- `pytest`: 183; `ruff` limpio; diff 0,92 / 0,90 / 0,92.
+- `pytest`: 191; `ruff` limpio; diff 0,92 / 0,90 / 0,92.
 
 | Fase | Métrica | Objetivo |
 |---|---|---|
@@ -686,7 +690,7 @@ de mostrarse. La matriz sigue siendo la fuente de verdad y la plantilla el respa
 | Fase 4 | sustitución silenciosa | 0 |
 | Fase 5 | respuestas estructuradas | 3 llamadas · plantilla de respaldo |
 | Fase 5 | sustitución silenciosa con LLM | 0/52 |
-| Fase 5 | coste | 2,65 llamadas · 6.537 tokens (Flash ~$1,33/1k off-peak) |
+| Fase 5 | coste | 2,65 llamadas · 6.214 tokens (Flash ~$1,27/1k off-peak) |
 
 ---
 
@@ -881,7 +885,9 @@ tokens, re-ranker local si el eval lo pide, auth si se expone.
 | Listas de campo | `LIST_FIELDS` = todos los campos de ficha + `RESCATE`; tabla de las 24 fichas con `no consta`/`no aplica`. Cubre dosis, composición, conservación y dosis de rescate de cada vacuna. |
 | Edad + rescate | Los 13 límites del Anexo 2 se anteponen al contexto del redactor; la pregunta “no recuperables” se responde con umbrales de edad. |
 | Ruido | Se elimina el bloque “Además” de las respuestas estructuradas. |
-| Tests | 183 (eran 176): redacción estructurada, respaldo por verificación/cobertura/números, listas de campo y límites de rescate. |
+| Citas | `short_citation` inline, deduplicación de citas idénticas y listado del CLI agrupado por sección; solo se muestran las secciones que la respuesta cita (`--fuentes` para el detalle). |
+| Brevedad | El checklist usa las cláusulas literales de la pregunta (`question_parts`), no las subconsultas del LLM; una pregunta de dos partes no recibe secciones de más. |
+| Tests | 191 (eran 176): redacción estructurada, respaldo por verificación/cobertura/números, listas de campo, límites de rescate, citas y fuentes. |
 
 **Decisiones tomadas:**
 

@@ -4,6 +4,7 @@ import argparse
 import json
 from collections import Counter
 
+from nts_rag.catalogo import VACUNA_NOMBRES
 from nts_rag.config import get_settings
 from nts_rag.evaluation import (
     RowResult,
@@ -26,6 +27,7 @@ from nts_rag.index import (
     load_chunks,
 )
 from nts_rag.rag.answer import NO_ANSWER, plan_and_gather, run_query
+from nts_rag.rag.citations import short_citation
 from nts_rag.rag.embeddings import Embedder
 from nts_rag.rag.retrieve import Retriever
 
@@ -42,6 +44,72 @@ def _print_chunks(settings, question: str, k: int) -> None:
         print(f"\n--- [{index}] score={chunk.score} ---")
         print(f"p. {chunk.pagina} | {chunk.seccion} | {chunk.tipo}")
         print(" ".join(chunk.text.split())[:900])
+
+
+def _source_groups(chunks) -> list[dict]:
+    """Agrupa los fragmentos por norma, páginas y sección para el listado del CLI."""
+
+    groups: dict[tuple, dict] = {}
+    for chunk in chunks:
+        key = (
+            chunk.metadata.get("documento_id"),
+            chunk.pagina,
+            chunk.pagina_fin,
+            chunk.seccion_numero or "",
+            chunk.seccion,
+        )
+        group = groups.setdefault(
+            key, {"chunk": chunk, "vacunas": [], "campos": [], "tipos": []}
+        )
+        slug = chunk.metadata.get("vacuna_slug")
+        if slug and slug not in group["vacunas"]:
+            group["vacunas"].append(str(slug))
+        campo = chunk.metadata.get("campo")
+        if campo and campo not in group["campos"]:
+            group["campos"].append(str(campo))
+        if chunk.tipo not in group["tipos"]:
+            group["tipos"].append(chunk.tipo)
+    return list(groups.values())
+
+
+def _print_sources(chunks, *, full: bool = False, text: str | None = None) -> None:
+    if full:
+        for index, chunk in enumerate(chunks, start=1):
+            extras = []
+            slug = chunk.metadata.get("vacuna_slug")
+            if slug:
+                extras.append(f"vacuna: {VACUNA_NOMBRES.get(slug, slug)}")
+            campo = chunk.metadata.get("campo")
+            if campo:
+                extras.append(f"campo: {campo}")
+            suffix = " · " + " · ".join(extras) if extras else ""
+            print(f"[{index}] p. {chunk.pagina} | {chunk.seccion} | {chunk.tipo}{suffix}")
+        return
+
+    groups = _source_groups(chunks)
+    if text is not None:
+        # Solo las secciones que la respuesta cita; si no cita ninguna, todas.
+        groups = [group for group in groups if short_citation(group["chunk"]) in text] or groups
+    word = "sección" if len(groups) == 1 else "secciones"
+    print(f"\nFuentes ({len(groups)} {word}):")
+    for index, group in enumerate(groups, start=1):
+        chunk = group["chunk"]
+        paginas = (
+            f"pp. {chunk.pagina}–{chunk.pagina_fin}"
+            if chunk.pagina_fin > chunk.pagina
+            else f"p. {chunk.pagina}"
+        )
+        details = []
+        if len(group["vacunas"]) == 1 and (
+            chunk.tipo == "campo" or chunk.seccion_numero.startswith("6.1.1")
+        ):
+            details.append(VACUNA_NOMBRES.get(group["vacunas"][0], group["vacunas"][0]))
+        elif len(group["vacunas"]) > 1:
+            details.append("varias vacunas")
+        elif group["campos"]:
+            details.append("campos: " + ", ".join(group["campos"]))
+        suffix = f" · {' · '.join(details)}" if details else ""
+        print(f"[{index}] {paginas} · {chunk.seccion} ({', '.join(group['tipos'])}){suffix}")
 
 
 def cmd_consultar(args: argparse.Namespace) -> None:
@@ -81,8 +149,7 @@ def cmd_consultar(args: argparse.Namespace) -> None:
     else:
         print(result.text)
     print(f"\n[modo: {result.mode}]")
-    for index, chunk in enumerate(chunks, start=1):
-        print(f"[{index}] p. {chunk.pagina} | {chunk.seccion} | {chunk.tipo}")
+    _print_sources(chunks, full=args.fuentes, text=result.text)
 
 
 def cmd_buscar(args: argparse.Namespace) -> None:
@@ -426,6 +493,11 @@ def build_parser() -> argparse.ArgumentParser:
     consultar.add_argument("pregunta")
     consultar.add_argument("-k", type=int, default=6)
     consultar.add_argument("--json", action="store_true")
+    consultar.add_argument(
+        "--fuentes",
+        action="store_true",
+        help="Muestra el detalle de cada fragmento (por defecto, una línea por sección)",
+    )
     consultar.add_argument(
         "--render", action="store_true", help="Renderiza el Markdown en terminal"
     )

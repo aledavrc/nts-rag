@@ -11,11 +11,11 @@ import httpx
 from nts_rag.catalogo import detect_vaccines
 from nts_rag.config import Settings
 from nts_rag.rag.abstain import Verdict, judge
-from nts_rag.rag.citations import citation, document_label, pages
+from nts_rag.rag.citations import document_label, pages, short_citation
 from nts_rag.rag.evidence import Evidence, gather_evidence
 from nts_rag.rag.fichas import CURRENT, PREVIOUS, RESCATE, get_matrix
 from nts_rag.rag.formatting import clip_markdown, format_chunk_markdown
-from nts_rag.rag.interpret import Plan, deterministic_plan, plan_query
+from nts_rag.rag.interpret import Plan, deterministic_plan, plan_query, question_parts
 from nts_rag.rag.retrieve import RetrievedChunk, Retriever
 from nts_rag.rag.structured import Structured, structured_answer
 from nts_rag.text import expand_tokens, tokenize
@@ -134,12 +134,18 @@ SYSTEM_PROMPT = """Eres un asistente documental especializado en la normativa de
 del Perú.
 Responde en español, de forma breve y literal, usando únicamente los fragmentos entregados.
 Cada fragmento empieza con una etiqueta [c1], [c2]… Cita cada afirmación con la etiqueta del
-fragmento que la sustenta, por ejemplo [c2] o [c1][c3]. No escribas tú las páginas, las
-secciones ni el nombre de la norma: el sistema sustituye las etiquetas por la cita exacta.
+fragmento que la sustenta, por ejemplo [c2] o [c1][c3]. Si varias viñetas o filas
+consecutivas comparten la misma fuente, una sola etiqueta al final del bloque basta.
+No escribas tú las páginas, las secciones ni el nombre de la norma: el sistema sustituye
+las etiquetas por la cita exacta.
 Si un fragmento pertenece a una norma derogada, dilo expresamente y no lo presentes como vigente.
 Contesta todas las partes de la pregunta, incluidas las que piden lo que NO cumple una
 condición (por ejemplo, qué vacunas no son recuperables); si una parte no consta, dilo.
+No respondas partes que no estén en la lista de partes ni añadas secciones que la
+pregunta no pida; no listes lo que no se pregunta.
+No mezcles el esquema por edad con los límites de rescate.
 Sé breve: no copies tablas completas ni listas largas si la pregunta se responde con lo esencial.
+No añadas una nota sobre la vigencia si no hay normas derogadas.
 Si la pregunta usa un rango de edad ("menor de 5 años"), no conviertas un límite en una
 conclusión absoluta: di desde o hasta qué edad se aplica.
 No inventes edades, dosis, intervalos, vías, temperaturas ni contraindicaciones.
@@ -227,7 +233,14 @@ class AnswerResult:
 # Alias conservados: los tests y otros módulos los usan con estos nombres.
 _pages = pages
 _document_label = document_label
-_citation = citation
+_citation = short_citation
+
+# Dos citas idénticas seguidas se muestran una sola vez.
+_DUP_CITATION_RE = re.compile(r"(\[[^\[\]]+\])(?:\s*\1)+")
+
+
+def dedupe_citations(text: str) -> str:
+    return _DUP_CITATION_RE.sub(r"\1", text)
 
 
 def _extractive(chunks: list[RetrievedChunk], *, max_fragments: int = 1) -> AnswerResult:
@@ -487,12 +500,17 @@ def _llm_answer(
         extra += "\nDiscrepancias detectadas: " + "; ".join(
             " vs ".join(c["valores"]) for c in verdict.conflictos
         )
-    if plan and plan.subconsultas:
-        extra += "\nPartes de la pregunta: " + " | ".join(plan.subconsultas)
+    parts = question_parts(query)
+    if len(parts) > 1:
+        extra += "\nPartes de la pregunta: " + " | ".join(parts)
     if plan and plan.edad_meses is not None and plan.rescate:
         extra += (
-            "\nResponde qué vacunas son recuperables y cuáles no, con los límites de edad "
-            "del Anexo 2; si una vacuna no consta, dilo."
+            "\nResponde solo esas partes, en orden. Si pide las no recuperables, da el "
+            "umbral de edad y no listes las recuperables si no se piden. Para un menor de "
+            "5 años, limita el esquema a 0 a 4 años. En la parte del esquema usa solo las "
+            "filas por edad; no mezcles los límites de rescate, que van en las partes de "
+            "recuperables/no recuperables. Para el esquema, usa una tabla de dos columnas "
+            "(Edad | Vacunas) y una sola cita al final de la tabla."
         )
     answer_tokens = 1800 if plan and plan.edad_meses is not None and plan.rescate else 900
     text = _chat(
@@ -547,6 +565,7 @@ def generate_answer(
     context = context or chunks
 
     def finish(result: AnswerResult) -> AnswerResult:
+        result.text = dedupe_citations(result.text)
         result.estado = verdict.estado
         result.motivo = verdict.motivo
         result.supuestos = list(plan.supuestos)

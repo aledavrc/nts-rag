@@ -450,9 +450,11 @@ está en
 
 Con LLM configurado (Fase 5), el eval completo mantiene 52/52 estados, 0 sustitución
 y 0 contaminación; las respuestas estructuradas se redactan a partir de la matriz y
-cuestan 3 llamadas cada una. El conjunto mide 2,65 llamadas y 6.537 tokens por
-consulta. A 1.000 consultas/mes con DeepSeek Flash: ~$1,33 off-peak y ~$2,67 en hora
-peak (estimación; ver §9.3 del documento de mejoras).
+cuestan 3 llamadas cada una. El conjunto mide 2,65 llamadas y 6.214 tokens por
+consulta. A 1.000 consultas/mes con DeepSeek Flash: ~$1,27 off-peak y ~$2,54 en hora
+peak (estimación; ver §9.3 del documento de mejoras). Las citas inline usan el formato
+corto y el CLI agrupa las fuentes por sección; solo muestra las secciones que la
+respuesta cita (`--fuentes` para el detalle por fragmento).
 
 `tests/test_smoke_index.py` comprueba (en local y, cuando se active, en CI) la estructura del índice versionado
 (totales, fichas, campos, lint, IDs y frescura del manifiesto).
@@ -474,7 +476,7 @@ peak (estimación; ver §9.3 del documento de mejoras).
   abstenerse, y una discrepancia que no sea de edad no se detecta todavía.
 - El modo extractivo no redacta una síntesis; la ruta con LLM sí, pero el eval mide
   recuperación/estado, no la calidad de la redacción. La ruta con LLM se midió con
-  DeepSeek Flash (2026-11-17); el coste estimado es ~$1,33/1.000 consultas off-peak.
+  DeepSeek Flash (2026-11-17); el coste estimado es ~$1,27/1.000 consultas off-peak.
 - Una respuesta bien formada no garantiza la exactitud del dato clínico:
   contrasta siempre con el Markdown o el PDF original.
 
