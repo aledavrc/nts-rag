@@ -1,9 +1,10 @@
 # Contexto de mejoras del RAG — NTS 246 / NTS 196
 
-> **Traspaso.** Análisis cerrado; correcciones previas aplicadas (índice de 1.004
-> chunks). **Fase 0 hecha** (sets de evaluación, métricas y línea base en §9.3).
-> El esquema v2 y el reindexado siguen pendientes.
-> Fecha: 2026-11-16 · Siguiente paso: Fase 1 de §10.
+> **Traspaso.** Análisis cerrado. **Fase 0 hecha** (sets de evaluación, métricas y
+> línea base en §9.3). **Fase 1 hecha**: esquema v2 reindexado (2.064 chunks, NTS
+> 246-2026 + NTS 196-2022), smoke tests de §11 en verde; resultados y desviaciones
+> en §9.3 y §10.
+> Fecha: 2026-11-16 · Siguiente paso: Fase 2 de §10.
 
 ## 0. TL;DR y mandato
 
@@ -506,6 +507,38 @@ BCG a los 6 años).
   y 6.1.1.14 (AMA): son las fichas cuyo campo `CONTRAINDICACIÓN` menciona
   embarazo/gestantes. La ficha 6.1.1.19 (VPH) que citaba el Anexo C no lo menciona.
 
+**Resultado Fase 1** (2026-11-16, índice v2 de 2.064 chunks, mismo comando, modo
+extractivo):
+
+| Tipo | n | recall@5 | recall@10 | recall@20 | completas @5/@10/@20 | decisión | estado exacto |
+|---|---|---|---|---|---|---|---|
+| lookup | 20 | 1.00 | 1.00 | 1.00 | 20/20/20 | 20/20 | 20/20 |
+| agregacion | 7 | 0.61 | **0.89** | 0.96 | 3/6/6 | 7/7 | 7/7 |
+| borde | 4 | 0.26 | 0.31 | 0.47 | 0/0/1 | 3/4 | 1/4 |
+| comparacion | 3 | 0.42 | 0.50 | 0.67 | 1/1/2 | 3/3 | 3/3 |
+| negativa | 11 | 0.50 | 1.00 | 1.00 | 0/2/2 | 8/11 | 8/11 |
+| **total** | 45 | 0.76 | 0.86 | 0.91 | 24/29/31 | 41/45 | 39/45 |
+
+Umbrales de Fase 1:
+
+| Métrica | Objetivo | Resultado |
+|---|---|---|
+| recall@10 agregación | ≥ 0.80 | **0.89** ✅ |
+| 6.2.2 en toda pregunta por edad | 100% | **6/6 en top-10** ✅ (posición 1–3 salvo el caso guía, en la 6) |
+| lookups | 20/20 | **20/20** ✅ |
+| índice fresco / lint / IDs | 0 / 100% / idénticos | **0 desfases / 0 errores / JSONL idéntico en dos pasadas** ✅ |
+
+- Lo que sube es lo que el diagnóstico atribuía a la estructura: filas de dominio
+  (la fila BCG del Anexo 2 sale en el top-5), edad tokenizada y sinónimos de
+  rescate. "¿Qué vacunas le tocan a un niño de 5 años?" ya no se abstiene.
+- Las comparativas pasan de 0.33 a 0.50 en recall@10 solo con indexar la 2022 y las
+  señales de versión: "dosis de rescate BCG 2022 vs 2026" recupera ambos Anexo 2.
+- Sin cambios (fuera del alcance de Fase 1): borde (necesita plan y matriz),
+  "vacunas nuevas" (necesita el diff de la Fase 3) y la abstención (6/9).
+- **Señuelo p.121 vivo**: en el caso guía las tablas de programación del Anexo 17
+  ocupan el top-5 y 6.2.2 queda en la posición 6. Excluirlas de la ruta de edad
+  es trabajo de la Fase 2 (§12).
+
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Fase 1 | recall@10 agregación | ≥ 0.80 |
@@ -532,7 +565,51 @@ BCG a los 6 años).
 3. ✅ `cmd_evaluar`: recall, completa, precision, abstiene, reformulación, `--por-tipo`.
 4. ✅ Línea base registrada en §9.3 (más `eval/comparativas.jsonl`).
 
-### Fase 1 — Esquema v2 + reindexado
+### Fase 1 — Esquema v2 + reindexado ✅
+
+**Hecho** (resultados en §9.3, smoke tests en §11):
+
+| Archivo | Cambio aplicado |
+|---|---|
+| `md_to_vector.py` | ID = `sha1(fuente + sección + tipo + texto completo)`, sufijo solo en duplicados exactos; el marcador "continuación del listado" extiende las páginas de la tabla (la p. 78 de 2026 quedaba sin chunk). `split_table` revisado: sin cambios. |
+| `config.py` | Registro `DOCUMENTS` (Anexo B), `INDEX_SCHEMA_VERSION = 2`, `corpus_dir`. |
+| `catalogo.py` (nuevo) | 13 claves canónicas y variantes, fichas del Anexo A por norma, `NO_APLICA` (jeringas en APO/rotavirus), tablas de dominio por título y `detect_vaccines`. |
+| `index.py` | Metadatos v2 (§6.2), campo canónico + `campo_original` solo en fichas, filas de dominio con `vacuna_slug`/`vacunas` y edades en meses, `corpus_lint()`, manifiesto con `schema_version`, documentos y hashes; `freshness_problems()`. |
+| `text.py` | "año(s)" fuera de las stopwords + tokens de edad (`edad5a`; "5 a 11 años" → `edad5a`…`edad11a`), `age_range_months`, `age_limit_months`, sinónimos de rescate y `detect_vigencias` (D7). |
+| `retrieve.py` | Vigencia vigente por defecto, filtros `documento`/`vigencia`, boost de campo por clave canónica u original. |
+| `schemas.py` / `api.py` | `Filtros.documento`, `Filtros.vigencia`, `tipo=fila`; `Fuente` con documento, versión, vigencia, `campo_original` y `vacuna_slug`. |
+| `answer.py` | Citas y contexto con el documento del chunk; "(derogada)" en la 2022. |
+| `cli.py` | `doctor` compara hashes y pasa `corpus_lint`; `indexar` imprime el lint. |
+| `Makefile` | `DOCS` incluye la 2022. |
+
+**Desviaciones y decisiones tomadas** (Mandato de §0):
+
+- Se adelantan dos piezas de la Fase 2 porque los smoke tests las exigen y sin
+  ellas la 2022 contaminaría los lookups: el filtro `vigencia=vigente` por defecto
+  y las citas por documento.
+- D7 ajustado: "antes" y "nuevo" sueltos **no** son señal de versión ("antes de
+  vacunar", Anexo 5). Cuentan `comparar`, `cambió`, `diferencia`, `vacunas
+  nuevas`, `incorpora`, `vs`, además de 2022/196/2026/246/vigente/"norma anterior".
+- La edad se resuelve con tokens sintéticos además de sacar "año(s)" de las
+  stopwords: el número suelto no casaba "5 años" con la fila "5 a 11 años".
+  "niño/niña" siguen siendo stopwords.
+- El Anexo 2 ya no genera chunks `campo` (era 10/13 de un artefacto); sus filas son
+  `fila` con vacuna y límite de edad.
+- Anexo E resuelto: #1 una colección con filtro de vigencia; #2 registro en
+  `config.py`; #3 los 24 slugs del Anexo A quedan congelados en `catalogo.py`; #4
+  edades en **meses** inclusivos ("4a11m29d" → 59, "5 a 11 años" → 60–143); #10
+  `corpus_lint` falla en CI (`tests/test_smoke_index.py`) y avisa en local
+  (`indexar`, `doctor`); #11 hash del texto completo sin normalizar.
+- Se mantienen el nombre del JSONL (`nts-246.chunks.jsonl`) y de la colección
+  (`nts_246`) aunque ya contienen las dos normas: renombrarlos toca Docker, `.env`
+  y la documentación y no aporta a la recuperación. Pendiente de decidir.
+- Dos arreglos de robustez encontrados al reindexar en Windows: el swap atómico
+  fallaba porque Chroma retiene `chroma.sqlite3` abierto (ahora se libera el
+  cliente y el índice anterior se aparta a `.old` antes de mover el nuevo), y los
+  hashes del manifiesto se calculan con saltos de línea normalizados a LF para que
+  `core.autocrlf` no produzca desfases falsos entre máquinas.
+
+Plan original:
 
 | Archivo | Cambio |
 |---|---|
@@ -550,7 +627,7 @@ BCG a los 6 años).
 
 | Archivo | Cambio |
 |---|---|
-| `retrieve.py` | `vigencia=vigente` por defecto; filtros slug/edad; pool 40–50; dedup/MMR; boost canónico. |
+| `retrieve.py` | ~~`vigencia=vigente` por defecto~~ (hecho en Fase 1); filtros slug/edad; pool 40–50; dedup/MMR; boost canónico; excluir tablas operativas (p. 121) de la ruta de edad. |
 | `retrieve.py` | `expand_context`: hermanos de `seccion_numero` con presupuesto. |
 | `interpret.py` (nuevo) | Plan LLM + validador + presuposiciones + subconsultas. |
 | `abstain.py` (nuevo) | Cobertura, conflictos y veredicto. |
@@ -578,18 +655,25 @@ años) vs Anexo 2 (4a11m29d). Se pueden reordenar o sustituir si hay algo mejor.
 
 ## 11. Smoke tests del reindexado
 
-- total ≈ 1.965 ± 10%;
-- 100% con `vigencia` y `documento_id`;
-- 0 etiquetas fuera de las 13;
-- 18 fichas 2022 / 24 fichas 2026;
-- manifiesto con `schema_version = 2` y hashes;
-- dos reindexados → mismos IDs;
-- `corpus_lint()` 100%;
-- ninguna fuente 2022 citada como "NTS 246";
-- consulta sin versión → 0 chunks de 2022;
-- "dosis de rescate BCG" → fila en top-5 (ya se cumple);
-- ficha recuperada → 13/13 campos;
-- 20 lookups siguen 20/20.
+Resultado del reindexado v2 (2026-11-16). Los marcados con *test* están en
+`tests/test_smoke_index.py`; el resto se comprobó contra el índice y lo cubre
+`evaluar`.
+
+- ✅ total ≈ 1.965 ± 10%: **2.064** (1.206 base + 543 campo + 315 fila; 1.153 de
+  2026 y 911 de 2022) — *test*;
+- ✅ 100% con `vigencia` y `documento_id` (también en los metadatos de Chroma) — *test*;
+- ✅ 0 etiquetas fuera de las 13 — *test*;
+- ✅ 18 fichas 2022 / 24 fichas 2026 — *test*;
+- ✅ manifiesto con `schema_version = 2` y hashes; 0 desfases — *test*;
+- ✅ dos reindexados → mismos IDs (JSONL byte a byte idéntico) — *test*;
+- ✅ `corpus_lint()` 100% — *test*;
+- ✅ ninguna fuente 2022 citada como "NTS 246": se cita "NTS N° 196-MINSA/DGIESP-2022
+  (derogada)" — *test* para los metadatos;
+- ✅ consulta sin versión → 0 chunks de 2022 (42 preguntas del eval, top-20);
+- ✅ "dosis de rescate BCG" → fila BCG del Anexo 2 en el puesto 2;
+- ✅ ficha recuperada → 13/13 campos (12/13 en APO y rotavirus: `JERINGAS` no
+  aplica) — *test*;
+- ✅ 20 lookups siguen 20/20.
 
 ---
 

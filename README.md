@@ -5,9 +5,9 @@ establece el Esquema Nacional de Inmunizaciones*. Responde únicamente con el
 contenido de los Markdown auditados e indexados de este repositorio y devuelve la
 página y la sección que sustentan cada respuesta.
 
-Este proyecto **no vuelve a hacer OCR ni validaciones de ingesta**: los archivos
-`corpus/markdown/8265031-...-parte-1.md` y `...-parte-2.md` ya son la fuente de
-verdad, y `pipelines/ocr/md_to_vector.py` los convierte en chunks con página,
+Este proyecto **no vuelve a hacer OCR ni validaciones de ingesta**: los Markdown
+de `corpus/markdown/` (NTS 246-2026 en dos partes y NTS 196-2022) ya son la fuente
+de verdad, y `pipelines/ocr/md_to_vector.py` los convierte en chunks con página,
 sección y tipo. La consulta consume esos chunks directamente.
 
 ## Cómo funciona
@@ -16,48 +16,60 @@ sección y tipo. La consulta consume esos chunks directamente.
 corpus/markdown/*.md
     → pipelines/ocr/md_to_vector.py (chunks con sección, páginas y tipo)
     → data/chunks/nts-246.chunks.jsonl
-    → fragmentación por campo de las fichas (6.1.1.x)
+    → esquema v2: documento y vigencia, campos canónicos de las fichas (6.1.1.x),
+      filas de las tablas de dominio, vacuna y edad normalizadas
     → embeddings FastEmbed + ChromaDB (data/index/)
-    → búsqueda vectorial + BM25 + RRF
+    → búsqueda vectorial + BM25 + RRF, solo en la norma vigente salvo señal de versión
     → re-rankeo con LLM (si está configurado)
     → respuesta LLM con verificación de fidelidad, o extractivo con citas
     → API FastAPI / CLI
 ```
 
-Estado actual: la recuperación acierta en preguntas de un campo o una ficha, pero
-todavía falla en preguntas por edad, comparativas y dosis de rescate. El análisis y
-el plan de la siguiente iteración están en
+Estado actual (Fase 1): la recuperación acierta en lookups (20/20) y en la mayoría
+de preguntas por edad y dosis de rescate (recall@10 0.89 en agregación). Las
+preguntas de borde, las comparativas que necesitan un diff y la abstención fina
+son el foco de las Fases 2 y 3, descritas en
 [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
 
 La recuperación combina:
 
 - búsqueda vectorial sobre `embed_text` (sección + páginas + contenido);
-- **chunks de campo**: cada ficha key-value se parte en un fragmento por campo
-  (`COMPOSICIÓN`, `DOSIS (CANTIDAD)`, `CONSERVACIÓN DE LA VACUNA`, …), de modo
-  que una pregunta sobre un dato concreto acierta el campo exacto;
-- BM25 sobre sección y texto, con recorte ligero de plurales y stopwords del
-  dominio (`niño`, `vacuna`, `año`…) para dar peso a los términos raros;
+- **chunks de campo**: cada ficha se parte en un fragmento por campo, con una de
+  13 claves canónicas (`COMPOSICION`, `DOSIS`, `CONSERVACION`, …) y la etiqueta
+  original, de modo que una pregunta sobre un dato concreto acierta el campo exacto;
+- **chunks de fila** de las tablas de dominio (calendarios 6.2.x, casos especiales
+  6.3.x y los anexos de administración simultánea, rescate, frascos abiertos,
+  vías, ESAVI severos y errores operativos), cada uno con su encabezado;
+- BM25 sobre sección y texto, con recorte ligero de plurales, stopwords del
+  dominio (`niño`, `vacuna`…) y tokens de edad (`5 años` casa con `5 a 11 años`);
 - fusión RRF, refuerzo de sección y de campo nombrado, y numeral citado;
 - expansión mínima de términos coloquiales (`gestante` → `embarazo`,
-  `gestación`, `prenatal`; `tarda` → `tiempo`, `aparición`).
+  `gestación`, `prenatal`; `recuperar`/`completar` → `rescate`).
 
-Los filtros de la API permiten acotar por sección, página o tipo de fragmento.
+Por defecto solo se consulta la norma **vigente**. La NTS 196-2022 entra cuando la
+pregunta la nombra (`2022`, `196`, "norma anterior") o compara normas (`comparar`,
+`cambió`, `vacunas nuevas`…), y sus citas llevan "(derogada)". Los filtros de la
+API acotan por sección, página, tipo de fragmento, documento o vigencia.
 
 ## Corpus
 
-| Dato | Valor |
-|---|---|
-| Documento | NTS N° 246-MINSA/DGIESP-2026 |
-| Páginas | 140 (97 + 43) con numeración impresa continua |
-| Chunks | 1004 (648 base + 356 campos de ficha) |
-| Entrada | `data/chunks/nts-246.chunks.jsonl` |
+| Dato | NTS 246-2026 (vigente) | NTS 196-2022 (derogada) |
+|---|---|---|
+| `documento_id` | `nts-246-2026` | `nts-196-2022` |
+| Páginas | 140 (97 + 43) con numeración impresa continua | 103 |
+| Fichas de vacuna | 24 | 18 |
+| Chunks | 1.153 | 911 |
 
-La NTS 196-2022 está en `corpus/` (Markdown y PDF) pero **aún no está indexada**;
-su ingesta forma parte de la siguiente iteración.
+Total: **2.064 chunks** = 1.206 base (texto y tabla) + 543 campos + 315 filas.
+Entrada: `data/chunks/nts-246.chunks.jsonl` (contiene las dos normas pese al nombre).
 
-Cada chunk ya contiene `section`, `section_number`, `pages`, `type`, `text` y
-`embed_text`. El índice embebe `embed_text` (sección + páginas + contenido) y
-guarda `text` como contenido mostrable.
+Cada chunk lleva `documento_id`, `documento`, `version`, `vigencia`, `pagina`,
+`pagina_fin`, `seccion`, `seccion_numero`, `tipo` (`texto`, `tabla`, `campo`,
+`fila`) y, cuando aplica, `campo`, `campo_original`, `vacuna_slug`, `vacunas`,
+`edad_min_meses` y `edad_max_meses`. El registro de documentos está en
+`src/nts_rag/config.py` y los catálogos (campos, fichas, vacunas) en
+`src/nts_rag/catalogo.py`. El índice embebe `embed_text` y guarda `text` como
+contenido mostrable.
 
 ## Instalación
 
@@ -94,6 +106,13 @@ make index         # reconstruye data/index/
 Al cambiar chunks o índice, commitea `data/chunks/`, `data/index/` y
 `data/manifest.json`: los contribuidores consultan sin reindexar.
 
+`make index` pasa `corpus_lint` (todas las fichas con sus 13 campos, ninguna
+etiqueta fuera del catálogo, todas las páginas cubiertas) y escribe en el
+manifiesto `schema_version` y el SHA-256 de cada Markdown y del JSONL. `make
+doctor` compara esos hashes con los archivos actuales y avisa si el índice quedó
+desfasado. Los IDs son estables: dependen del documento, la sección, el tipo y el
+texto completo, así que dos reindexados dan los mismos IDs.
+
 ## API
 
 | Método | Ruta | Función |
@@ -116,14 +135,19 @@ Respuesta abreviada:
   "respuesta": "**Según la normativa cargada:**\n\n**COMPOSICIÓN**\n\nVacuna PCV 20…",
   "fuentes": [
     {
-      "chunk_id": "f4a9864563279413-campo-3",
+      "chunk_id": "a07035c90dba89f9-composicion",
       "documento": "NTS N° 246-MINSA/DGIESP-2026",
+      "documento_id": "nts-246-2026",
+      "version": 2026,
+      "vigencia": "vigente",
       "pagina": 24,
       "pagina_fin": 25,
       "seccion": "6.1.1.10. VACUNA ANTINEUMOCÓCICA (*)",
       "seccion_numero": "6.1.1.10",
       "tipo": "campo",
-      "campo": "COMPOSICIÓN",
+      "campo": "COMPOSICION",
+      "campo_original": "COMPOSICIÓN",
+      "vacuna_slug": "neumococo",
       "fragmento": "**COMPOSICIÓN**\n\nVacuna PCV 20…",
       "score": 1.0
     }
@@ -145,6 +169,10 @@ Filtros opcionales en `/consulta` y `/buscar`:
 ```
 
 `pagina` acepta cualquier página cubierta por el chunk (`pagina`–`pagina_fin`).
+`tipo` admite `texto`, `tabla`, `campo` o `fila`. `documento` (`nts-246-2026`,
+`nts-196-2022`) fija una norma; `vigencia` (`vigente`, `derogada`, `todas`) manda
+sobre las señales de versión de la pregunta. Sin ninguno de los dos solo se busca
+en la norma vigente, salvo que la pregunta nombre la 2022 o compare normas.
 
 ## CLI
 
@@ -227,8 +255,10 @@ nts-rag/
 │   ├── prompts/
 │   └── plantillas/
 ├── src/nts_rag/
-│   ├── config.py                 # NTS_RAG_*
-│   ├── index.py                  # JSONL → ChromaDB
+│   ├── config.py                 # NTS_RAG_* y registro de documentos
+│   ├── catalogo.py               # campos canónicos, fichas y vacunas
+│   ├── evaluation.py             # métricas de `evaluar`
+│   ├── index.py                  # JSONL → ChromaDB, lint y manifiesto
 │   ├── schemas.py                # contratos de la API
 │   ├── api.py                    # FastAPI
 │   ├── cli.py                    # comandos
@@ -280,20 +310,31 @@ devuelve el resumen en JSON.
 | `eval/preguntas.jsonl` | 20 lookups + 5 fuera de alcance (regresión) |
 | `eval/agregacion.jsonl` | 7 de agregación (edad, rescate, gestante) + 3 negativas |
 | `eval/ambiguedades.jsonl` | 4 preguntas de borde con estado/motivo esperados + 3 negativas |
-| `eval/comparativas.jsonl` | 3 comparativas 2022/2026 (necesitan la NTS 196 indexada) |
+| `eval/comparativas.jsonl` | 3 comparativas 2022/2026 |
 
-Línea base actual (modo extractivo): lookups **20/20** en @5; agregación
-recall@10 **0.39** (2/7 completas); borde 0.31; comparativas 0.33; abstención
-correcta en 6/9 negativas. El detalle está en
+Resultados actuales (Fase 1, modo extractivo), en recall@10:
+
+| Tipo | Fase 0 | Fase 1 |
+|---|---|---|
+| lookups | 1.00 (20/20) | 1.00 (20/20) |
+| agregación | 0.39 (2/7 completas) | **0.89** (6/7 completas) |
+| borde | 0.31 | 0.31 |
+| comparativas | 0.33 | 0.50 |
+
+La abstención es correcta en 6/9 negativas. El detalle está en
 [`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
+`tests/test_smoke_index.py` comprueba en CI la estructura del índice versionado
+(totales, fichas, campos, lint, IDs y frescura del manifiesto).
 
 ## Limitaciones
 
-- El sistema solo conoce las normas indexadas (hoy, la NTS 246-2026).
+- El sistema solo conoce las normas indexadas: NTS 246-2026 (vigente) y NTS
+  196-2022 (derogada, solo bajo petición o comparación).
 - La recuperación es vectorial + BM25 con re-rankeo LLM opcional; en preguntas
   ambiguas o con vocabulario muy genérico puede no acertar el fragmento exacto.
-- Las preguntas por edad, las comparativas entre vacunas o normas y la dosis de
-  rescate son el foco de la siguiente iteración.
+- Las comparaciones entre normas todavía dependen de la búsqueda: no hay un diff
+  campo a campo (Fase 3). En el caso guía ("niño de 5 años sin vacunas") las tablas
+  de programación del Anexo 17 aún desplazan al calendario 6.2.2 al sexto puesto.
 - La abstención es heurística: una pregunta ajena que comparta vocabulario con
   la norma puede devolver un fragmento relacionado en lugar de abstenerse.
 - El modo extractivo no redacta una síntesis; devuelve el fragmento más
@@ -303,7 +344,7 @@ correcta en 6/9 negativas. El detalle está en
 
 ## Mejoras esperadas
 
-El estado actual, el análisis y el plan de la siguiente iteración (esquema v2,
-corpus 2022, preguntas por edad, comparativas, matriz de fichas, abstención y coste)
+El estado actual, el análisis y el plan de las siguientes fases (plan de consulta
+con LLM, abstención por cobertura, matriz de fichas, diff entre normas y coste)
 están en [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md). Léelo antes de
 cambiar la recuperación o el esquema de chunks.
