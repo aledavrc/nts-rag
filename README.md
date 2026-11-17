@@ -24,15 +24,17 @@ corpus/markdown/*.md
     → evidencia: búsqueda vectorial + BM25 + RRF reordenada por el plan, más slots
       que garantizan cobertura (campo por vacuna, calendario por edad, Anexo 2…)
     → veredicto por código: respondida · parcial · abstenida · aclaración
-    → respuesta LLM con citas [cN] y verificación, o extractivo con citas
+    → comparaciones, listas, superlativos y diffs: tabla de la matriz
+      vacuna × campo × versión con cita por celda (0 llamadas)
+    → resto: respuesta LLM con citas [cN] y verificación, o extractivo con citas
     → API FastAPI / CLI
 ```
 
-Estado actual (Fase 2): lookups 20/20, preguntas por edad y rescate con todas sus
-fuentes (recall@10 1.00 en agregación) y el estado correcto en las 45 preguntas del
-eval (respondida, parcial con su motivo, abstención o aclaración). Las comparativas
-que necesitan un diff entre normas y los superlativos son el foco de la Fase 3,
-descrita en
+Estado actual (Fase 3): lookups 20/20, preguntas por edad y rescate con todas sus
+fuentes, comparaciones y listas completas desde la matriz de fichas, diff entre la
+NTS 196-2022 y la NTS 246-2026, y el estado correcto en las 52 preguntas del eval.
+La precisión del diff es 0,92 en un set etiquetado a ciegas (objetivo 0,90). El
+análisis y las siguientes fases están en
 [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
 
 La recuperación combina:
@@ -117,6 +119,41 @@ doctor` compara esos hashes con los archivos actuales y avisa si el índice qued
 desfasado. Los IDs son estables: dependen del documento, la sección, el tipo y el
 texto completo, así que dos reindexados dan los mismos IDs.
 
+## Matriz de fichas y diff
+
+Las 42 fichas (24 de 2026 y 18 de 2022) forman una matriz vacuna × campo × versión:
+los 13 campos canónicos más `RESCATE` (la fila de la vacuna en el Anexo 2). Una
+celda ausente es *no aplica* (jeringas en vacunas orales) o *no consta*; nunca se
+rellena. Sobre ella se responden sin LLM, con una cita por celda:
+
+| Pregunta | Respuesta |
+|---|---|
+| "Compara la conservación de la SPR y la AMA" | tabla vacunas × campos |
+| "¿Qué vacunas son de virus vivos atenuados?" | lista completa (7) |
+| "¿Qué vacunas están contraindicadas en el embarazo?" | lista completa (3) |
+| "¿Qué vacunas se aplican en el muslo y cuáles en el deltoides?" | las 24 fichas por sitio |
+| "¿Qué vacuna previene contra más cepas?" | valencias declaradas, sin ganador |
+| "¿Qué vacunas nuevas incorpora la NTS 246?" | 6 fichas nuevas |
+| "¿Qué cambió en el rescate de la BCG entre 2022 y 2026?" | diff de la celda con ambas citas |
+
+El diff clasifica cada celda en `cambio_real`, `redaccional`, `movido`, `nuevo`,
+`eliminado`, `sin_cambio`, `no_consta` o `no_aplica`, comparando cada campo según lo
+que significa: el tipo por familia (viva atenuada, inactivada, pasiva), conservación,
+dosis y jeringas por sus cifras, las listas elemento a elemento; reconoce un dato
+movido a una remisión y los límites de edad equivalentes ("menores de 5 años" =
+"hasta 4 años 11 meses 29 días"). Tiende a sobreavisar: puede marcar como cambio
+una redacción nueva, pero en los tres sets etiquetados solo se le escapa un cambio
+real.
+
+```bash
+python -m nts_rag.cli ficha bcg                      # 14 campos con cita
+python -m nts_rag.cli ficha bcg --norma 2022
+python -m nts_rag.cli comparar spr ama --campo CONSERVACION CONTRAINDICACIONES
+python -m nts_rag.cli diff                           # fichas nuevas y eliminadas
+python -m nts_rag.cli diff bcg --solo-cambios        # BCG campo a campo
+python -m nts_rag.cli diff --evaluar eval/diff.jsonl eval/diff_control.jsonl eval/diff_control2.jsonl
+```
+
 ## API
 
 | Método | Ruta | Función |
@@ -197,6 +234,9 @@ python -m nts_rag.cli consultar --render "¿Qué consecuencias tiene una inyecci
 python -m nts_rag.cli buscar "cadena de frío"
 python -m nts_rag.cli inspeccionar "dosis de la vacuna antineumocócica" -k 3
 python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl -k 5
+python -m nts_rag.cli ficha spr
+python -m nts_rag.cli comparar pentavalente hexavalente
+python -m nts_rag.cli diff apo --solo-cambios
 python -m nts_rag.cli servir --reload
 ```
 
@@ -292,6 +332,9 @@ nts-rag/
 │       ├── retrieve.py           # vectorial + BM25 + RRF
 │       ├── evidence.py           # slots, diversidad y expansión de sección
 │       ├── abstain.py            # veredicto: estado, motivo, conflictos, premisas
+│       ├── fichas.py             # matriz vacuna × campo × versión y diff
+│       ├── structured.py         # respuestas por plantilla desde la matriz
+│       ├── citations.py          # citas desde metadatos
 │       ├── answer.py             # pipeline, citas [cN], LLM opcional / extractivo
 │       └── formatting.py         # Markdown para respuestas
 ├── tests/
@@ -337,6 +380,8 @@ devuelve el resumen en JSON.
 | `eval/agregacion.jsonl` | 7 de agregación (edad, rescate, gestante) + 3 negativas |
 | `eval/ambiguedades.jsonl` | 4 preguntas de borde con estado/motivo esperados + 3 negativas |
 | `eval/comparativas.jsonl` | 3 comparativas 2022/2026 |
+| `eval/matriz.jsonl` | 3 comparaciones nombradas, 3 listas globales y 1 contradicción |
+| `eval/diff*.jsonl` | celdas 2022/2026 etiquetadas a mano: diseño y dos controles a ciegas |
 
 `evaluar` mide la recuperación del sistema completo (plan + evidencia, la de
 `/consulta`); `--solo-busqueda` mide el buscador híbrido solo. También informa la
@@ -345,16 +390,19 @@ pregunta no nombra.
 
 Resultados actuales (modo extractivo, sin LLM), en recall@10:
 
-| Tipo | Fase 0 | Fase 1 | Fase 2 |
-|---|---|---|---|
-| lookups | 1.00 (20/20) | 1.00 (20/20) | 1.00 (20/20) |
-| agregación | 0.39 (2/7 completas) | 0.89 (6/7) | **1.00** (7/7) |
-| borde | 0.31 | 0.31 | **0.82** |
-| comparativas | 0.33 | 0.50 | 0.67 |
-| estado exacto | 38/45 | 39/45 | **45/45** |
+| Tipo | Fase 0 | Fase 1 | Fase 2 | Fase 3 |
+|---|---|---|---|---|
+| lookups | 1.00 (20/20) | 1.00 (20/20) | 1.00 (20/20) | 1.00 (20/20) |
+| agregación | 0.39 (2/7 completas) | 0.89 (6/7) | 1.00 (7/7) | 1.00 (7/7) |
+| borde | 0.31 | 0.31 | 0.82 | 0.88 |
+| comparativas | 0.33 | 0.50 | 0.67 | **1.00** |
+| estado exacto | 38/45 | 39/45 | 45/45 | **52/52** (con `matriz.jsonl`) |
 
-En la Fase 2 la abstención es correcta en 9/9 negativas, sin abstenciones indebidas,
-el motivo coincide en 7/7 y la contaminación es 0. El detalle está en
+En la Fase 3 la abstención es correcta en 9/9 negativas sin abstenciones indebidas,
+el motivo coincide en 8/8, la contaminación es 0, las comparaciones nombradas y las
+listas globales están completas (6/6) y la contradicción conocida sale con ambas
+citas. La precisión del diff es 0,92 en el set de control ciego (22/24). El detalle
+está en
 [`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
 `tests/test_smoke_index.py` comprueba en CI la estructura del índice versionado
 (totales, fichas, campos, lint, IDs y frescura del manifiesto).
@@ -364,10 +412,12 @@ el motivo coincide en 7/7 y la contaminación es 0. El detalle está en
 - El sistema solo conoce las normas indexadas: NTS 246-2026 (vigente) y NTS
   196-2022 (derogada, solo bajo petición o comparación).
 - En preguntas con vocabulario muy genérico la búsqueda puede no acertar el
-  fragmento exacto ("¿cuándo se deja de vacunar en el vasto externo?" no trae la
-  fila del Anexo 6).
-- Las comparaciones entre normas todavía dependen de la búsqueda: no hay un diff
-  campo a campo ("vacunas nuevas de 2026" falla). Llega en la Fase 3.
+  fragmento exacto.
+- El diff entre normas acierta 0,92 y, cuando falla, casi siempre sobreavisa
+  (marca «cambió» en una redacción nueva). Revisa las celdas marcadas «cambió»
+  antes de citarlas como cambio normativo.
+- Las respuestas por plantilla (tablas de la matriz) son exactas y citadas, pero no
+  redactadas.
 - El veredicto usa reglas deterministas (catálogos, edades, alérgenos): una
   pregunta fuera de alcance que comparta vocabulario con la norma puede no
   abstenerse, y una discrepancia que no sea de edad no se detecta todavía.

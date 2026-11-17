@@ -5,8 +5,11 @@
 > 246-2026 + NTS 196-2022), smoke tests de §11 en verde. **Fase 2 hecha**: plan de
 > consulta (LLM con validador, o determinista), evidencia por slots, expansión de
 > sección, veredicto por código y citas `[cN]`; estado exacto 45/45 y contaminación
-> 0. Resultados y desviaciones en §9.3 y §10.
-> Fecha: 2026-11-16 · Siguiente paso: Fase 3 de §10.
+> 0. **Fase 3 hecha**: matriz vacuna × campo × versión, diff entre normas, rutas
+> estructuradas y comandos `ficha`/`comparar`/`diff`; estado exacto 52/52 y
+> precisión del diff **0,92 en un set ciego** (objetivo 0,90). Resultados y
+> desviaciones en §9.3 y §10.
+> Fecha: 2026-11-16 · Siguiente paso: Fase 4 de §10.
 
 ## 0. TL;DR y mandato
 
@@ -581,6 +584,65 @@ Abstención: 9/9 cuando debe, 0/36 indebidas; motivo exacto 7/7. Umbrales:
   (`tests/test_phase2.py`), no medidos con un modelo real. `reformulacion_util`
   sigue en n/d por lo mismo.
 
+**Resultado Fase 3** (2026-11-16, mismo índice v2, sin LLM). Se añade
+`eval/matriz.jsonl` (3 conjuntos nombrados de §3.3, 3 listas globales y 1
+contradicción) y tres sets de diff etiquetados a mano, cada uno **antes** de ver
+cómo lo clasifica el código: `eval/diff.jsonl` (diseño: 20 celdas + 6 fichas
+nuevas), `eval/diff_control.jsonl` (control 1: 20 celdas) y
+`eval/diff_control2.jsonl` (control 2: 24 celdas, incluidas 4 de `RESCATE`).
+
+```bash
+python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl eval/agregacion.jsonl \
+  eval/ambiguedades.jsonl eval/comparativas.jsonl eval/matriz.jsonl -k 5 10 --por-tipo
+python -m nts_rag.cli diff --evaluar eval/diff.jsonl eval/diff_control.jsonl   eval/diff_control2.jsonl
+```
+
+| Tipo | n | recall@5 | recall@10 | decisión | estado exacto |
+|---|---|---|---|---|---|
+| lookup | 20 | 1.00 | 1.00 | 20/20 | 20/20 |
+| agregacion | 7 | 1.00 | 1.00 | 7/7 | 7/7 |
+| borde | 4 | **0.82** | 0.88 | 4/4 | 4/4 |
+| comparacion | 3 | **0.94** | **1.00** | 3/3 | 3/3 |
+| conjunto (nuevo) | 3 | 1.00 | 1.00 | 3/3 | 3/3 |
+| global (nuevo) | 3 | — | — | 3/3 | 3/3 |
+| contradiccion (nuevo) | 1 | — | — | 1/1 | 1/1 |
+| negativa | 11 | 1.00 | 1.00 | 11/11 | 11/11 |
+| **total** | 52 | 0.98 | 0.99 | **52/52** | **52/52** |
+
+Umbrales de Fase 3:
+
+| Métrica | Objetivo | Resultado |
+|---|---|---|
+| cobertura nombrada | 2/2 | **3/3** conjuntos con todas las vacunas/celdas ✅ |
+| cobertura global | 7 · 3 · 24 | **7/7** vivas atenuadas · **3/3** contraindicadas en el embarazo · **24/24** celdas de vía y sitio ✅ (precisión de las listas 0.92) |
+| precisión del diff | ≥ 0.90 | control 2, ciego: **0.92** (22/24) ✅ · control 1: 0.90 (18/20) · diseño: 0.92 (24/26) |
+| contradicciones | 1/1 con ambas citas | **1/1** (anticuerpo monoclonal: ficha 6.1.1.24 y calendario 6.2.2) ✅ |
+| abstención en negativas | 5/5 | **9/9**, 0 indebidas ✅ |
+
+- **Cómo se llegó al diff y qué cifra vale.** Primera versión (una sola medida
+  de palabras para todos los campos): diseño 0.77. Reglas por campo de D10 (familia
+  del tipo; cifras en conservación, dosis y jeringas; listas elemento a elemento):
+  diseño 0.92, pero control 1 **0.80**, por debajo del umbral. Sus 4 fallos iban en
+  la misma dirección (marcar `cambio_real` donde había redacción o un dato
+  movido). Se etiquetó entonces el control 2 a ciegas (línea base 0.88, sin mirar
+  qué fallaba) y se añadieron tres reglas generales: (1) `movido` cuando la versión
+  nueva conserva solo parte de las palabras y cifras y remite a otra sección; (2)
+  límites de edad equivalentes ("menores de 5 años" = "hasta 4a11m29d", pero no
+  "hasta 5 años 0 días"); (3) en composición, añadir detalle sin quitar nada es
+  redacción. Resultado: control 2 **0.92**. El control 1 sube a 0.90, pero es
+  optimista porque esas reglas salen de sus fallos; la cifra honesta es la del
+  control 2. Sus dos fallos (dT adulto esquema, influenza dosis) se vieron después
+  de medir y no se ajustaron.
+- Sigue tendiendo a sobreavisar: de los 7 fallos en los tres sets, 6 marcan un
+  cambio que no lo es; el único cambio real que se escapa es BCG dosis (mismas
+  cifras, otra asignación por edad).
+- Cerrados por la matriz: "vacunas nuevas 2026 vs 2022" (0/6 → 6/6, diff de
+  catálogo), "más cepas" (2/5 → 5/5 en el top-10, tabla de valencias) y la
+  edad máxima de APO entre normas (diff de esquema y Anexo 2 con las cuatro citas).
+  "vasto externo" (0/1 → 1/1) lo cierra un slot del anexo de vías y técnicas.
+- La tabla de valencias incluye APO (bivalente), que la referencia de §7.4 no
+  listaba: es un dato del texto, no un error.
+
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Fase 1 | recall@10 agregación | ≥ 0.80 |
@@ -709,10 +771,37 @@ Plan original:
 | `abstain.py` (nuevo) | Cobertura, conflictos y veredicto. |
 | `answer.py` | Citas por documento; redacción LLM; contrato de estado. |
 
-### Fase 3 — Matriz y comparación
+### Fase 3 — Matriz y comparación ✅
 
-`fichas.py` (matriz, valores canónicos, operaciones), `entidades.py` (catálogo y
-alias), render de tabla/diff, comandos `comparar`, `ficha`, `diff`.
+**Hecho** (resultados en §9.3):
+
+| Archivo | Cambio aplicado |
+|---|---|
+| `rag/fichas.py` (nuevo) | `Matrix` con 567 celdas `(vacuna, campo, documento)` — los 13 campos canónicos más `RESCATE` (fila del Anexo 2) —, estados `no_aplica`/`no_consta`/`sin_ficha`; valores normalizados (tipo multi-etiqueta, vía, sitio, valencia, remisiones); operaciones `ficha`, `compare`, `filter`, `diff`, `catalog_diff`, `valences`; `classify_change` con las 8 clases de D10; render de tabla con cita por celda (D11). |
+| `rag/structured.py` (nuevo) | Rutas por plantilla, 0 llamadas (§8.3): comparación/conjunto/común → tabla; global por propiedad → lista completa; vía y sitio → las 24 fichas; superlativo → valencias; comparación de normas → diff de celdas o de catálogo. Las celdas son las fuentes. |
+| `rag/citations.py` (nuevo) | Citas compartidas (cita completa y compacta de celda). |
+| `rag/answer.py` / `evidence.py` | `modo: "estructurado"`; las celdas encabezan las fuentes (hasta 30); si la matriz resuelve la pregunta, está en el alcance; slot del anexo de vías y técnicas para vía y sitio sin vacuna. |
+| `cli.py` | `ficha`, `comparar`, `diff` (con `--solo-cambios` y `--evaluar`). `evaluar` mide cobertura de vacunas/celdas, precisión de las listas y citas esperadas. |
+
+**Desviaciones y decisiones tomadas:**
+
+- No hay `entidades.py`: el catálogo y los alias ya viven en `catalogo.py` desde
+  la Fase 1 (con los calificadores DT/dT/DPT, SR/SPR, hexavalente/VIH).
+- El Anexo 2 entra en la matriz como campo `RESCATE`: las comparaciones de
+  rescate y de edad máxima entre normas son diffs de celda, no de búsqueda.
+- Las rutas estructuradas responden con plantilla **también con LLM**: es la
+  palanca de §8.3 (0 llamadas) y evita que el redactor reordene o resuma celdas
+  citadas. Coste: respuestas menos naturales.
+- Anexo E resuelto: #5 los valores se normalizan **en la matriz**, no en el
+  índice (no obliga a reindexar); #6 los punteros se resuelven por `vacuna_slug`
+  + fila del Anexo 2; #7 el diff es una **tabla**; #8 `no_aplica` solo para los
+  pares de `NO_APLICA`, el resto `no_consta`.
+- El diff se afinó con tres reglas generales medidas en un set ciego nuevo
+  (§9.3). Cualquier ajuste futuro necesita otro set nuevo: los tres actuales ya se
+  han visto.
+
+Plan original: `fichas.py` (matriz, valores canónicos, operaciones), `entidades.py`
+(catálogo y alias), render de tabla/diff, comandos `comparar`, `ficha`, `diff`.
 
 ### Fase 4 — Endurecer
 
