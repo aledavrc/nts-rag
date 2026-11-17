@@ -144,6 +144,15 @@ def consulta(request: Request, body: ConsultaRequest) -> ConsultaResponse:
         respuesta=answer.text,
         fuentes=[_fuente(chunk) for chunk in chunks],
         modo=answer.mode,  # type: ignore[arg-type]
+        estado=answer.estado,  # type: ignore[arg-type]
+        motivo=answer.motivo,  # type: ignore[arg-type]
+        reformulacion=answer.reformulacion,
+        supuestos=answer.supuestos,
+        faltan_fuentes=answer.faltan_fuentes,
+        conflictos=answer.conflictos,  # type: ignore[arg-type]
+        llamadas_llm=answer.llamadas,
+        tokens_entrada=answer.tokens_entrada,
+        tokens_salida=answer.tokens_salida,
         tiempo_ms=elapsed,
     )
 

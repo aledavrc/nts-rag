@@ -98,6 +98,25 @@ def score_retrieval(
     )
 
 
+def contamination(plan: Any, chunks: list[RetrievedChunk]) -> int:
+    """Fuentes que no debían estar (Fase 2, objetivo 0).
+
+    * Norma derogada sin que la pregunta la pida.
+    * Campo de ficha de una vacuna que la pregunta no nombra, cuando nombra alguna.
+    """
+
+    vigencias = set(plan.vigencias)
+    entidades = set(plan.entidades)
+    count = 0
+    for chunk in chunks:
+        if chunk.vigencia not in vigencias:
+            count += 1
+        elif entidades and chunk.tipo == "campo":
+            if chunk.metadata.get("vacuna_slug") not in entidades:
+                count += 1
+    return count
+
+
 @dataclass
 class RowResult:
     row: dict[str, Any]
@@ -106,6 +125,7 @@ class RowResult:
     estado: str | None = None
     motivo: str | None = None
     reformulacion: RetrievalScore | None = None
+    contaminacion: int | None = None
 
     @property
     def estado_esperado(self) -> str:
@@ -167,6 +187,9 @@ def summarize(results: list[RowResult], ks: list[int]) -> dict[str, Any]:
         "con_motivo_esperado": sum(bool(r.row.get("motivo_esperado")) for r in con_estado),
     }
 
+    medidas = [r.contaminacion for r in results if r.contaminacion is not None]
+    summary["contaminacion"] = [sum(medidas), len(medidas)] if medidas else None
+
     reformuladas = [r.reformulacion for r in results if r.reformulacion is not None]
     summary["reformulacion_util"] = (
         [sum(s.hit for s in reformuladas), len(reformuladas)] if reformuladas else None
@@ -211,6 +234,9 @@ def format_summary(summary: dict[str, Any], ks: list[int], *, title: str) -> str
             lines.append(
                 f"  motivo exacto {estado['motivo_exacto']}/{estado['con_motivo_esperado']}"
             )
+    if summary.get("contaminacion"):
+        total, preguntas = summary["contaminacion"]
+        lines.append(f"  contaminación {total} fuentes en {preguntas} preguntas (@{ks[0]})")
     reformulacion = summary["reformulacion_util"]
     if reformulacion:
         lines.append(f"  reformulación útil {reformulacion[0]}/{reformulacion[1]}")

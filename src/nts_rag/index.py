@@ -12,6 +12,7 @@ from typing import Any
 
 import chromadb
 
+from nts_rag import catalogo
 from nts_rag.catalogo import (
     CANONICAL_FIELDS,
     FICHA_HEADERS,
@@ -55,6 +56,7 @@ META_FIELDS = (
 )
 
 TIPOS = ("texto", "tabla", "campo", "fila")
+CATALOG_KEY = "src/nts_rag/catalogo.py"
 
 _SEPARATOR_RE = re.compile(r"^\|[\s:\-|]+\|$")
 _LABEL_RE = re.compile(r"^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s\/().,:°'0-9\-]+$")
@@ -392,7 +394,11 @@ def source_paths(settings: Settings) -> list[Path]:
 
 
 def source_hashes(settings: Settings) -> dict[str, str]:
-    return {path.as_posix(): _sha256(path) for path in source_paths(settings) if path.exists()}
+    hashes = {path.as_posix(): _sha256(path) for path in source_paths(settings) if path.exists()}
+    # El catálogo genera metadatos (vacunas, campos, tablas de dominio): si cambia,
+    # el índice queda desfasado aunque el corpus y el JSONL sigan iguales.
+    hashes[CATALOG_KEY] = _sha256(Path(catalogo.__file__))
+    return hashes
 
 
 def read_manifest(settings: Settings) -> dict[str, Any] | None:

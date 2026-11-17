@@ -270,6 +270,9 @@ QUERY_SYNONYMS = {
     "atrasado": ("rescate",),
     "recibido": ("rescate",),
     "interrumpido": ("rescate", "reiniciar"),
+    # La norma dice "serotipos" donde la pregunta dice "cepas".
+    "cepa": ("serotipo", "serogrupo", "subgrupo"),
+    "serotipo": ("cepa", "serogrupo"),
 }
 
 

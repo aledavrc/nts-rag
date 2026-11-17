@@ -51,10 +51,40 @@ class Fuente(BaseModel):
     score: float
 
 
+class Conflicto(BaseModel):
+    vacuna: str
+    campo: str
+    valores: list[str]
+    fuentes: list[str]
+
+
 class ConsultaResponse(BaseModel):
     respuesta: str
     fuentes: list[Fuente]
     modo: Literal["llm", "extractivo"]
+    # Contrato de estado (§7.3): lo decide el código, no el LLM.
+    estado: Literal["respondida", "parcial", "abstenida", "aclaracion"] = "respondida"
+    motivo: (
+        Literal[
+            "fuera_de_alcance",
+            "sin_evidencia",
+            "evidencia_insuficiente",
+            "conflicto",
+            "premisa_invalida",
+            "metrica_no_comparable",
+            "requiere_conocimiento_externo",
+            "ambiguedad",
+        ]
+        | None
+    ) = None
+    reformulacion: str | None = None
+    supuestos: list[str] = Field(default_factory=list)
+    faltan_fuentes: list[str] = Field(default_factory=list)
+    conflictos: list[Conflicto] = Field(default_factory=list)
+    # Coste de la consulta: llamadas al LLM y tokens (0 en modo extractivo).
+    llamadas_llm: int = 0
+    tokens_entrada: int = 0
+    tokens_salida: int = 0
     formato: Literal["markdown"] = "markdown"
     tiempo_ms: int
 

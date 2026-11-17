@@ -123,6 +123,83 @@ FICHAS: dict[str, dict[str, str]] = {
 
 VACUNA_SLUGS = tuple(dict.fromkeys(FICHAS["nts-246-2026"].values()))
 
+# Nombre legible de cada vacuna: se usa para construir subconsultas.
+VACUNA_NOMBRES: dict[str, str] = {
+    "bcg": "vacuna BCG",
+    "hvb": "vacuna contra hepatitis B (HvB)",
+    "hexavalente": "vacuna hexavalente",
+    "pentavalente": "vacuna pentavalente",
+    "dt_pediatrico": "vacuna DT pediátrico",
+    "hib": "vacuna Haemophilus influenzae tipo b (Hib)",
+    "ipv": "vacuna antipolio inactivada (IPV)",
+    "apo": "vacuna antipolio oral (APO)",
+    "rotavirus": "vacuna contra rotavirus",
+    "neumococo": "vacuna antineumocócica",
+    "spr": "vacuna SPR (sarampión, paperas y rubeola)",
+    "sr": "vacuna SR (sarampión y rubeola)",
+    "varicela": "vacuna contra varicela",
+    "ama": "vacuna antiamarílica (fiebre amarilla)",
+    "dpt": "vacuna DPT",
+    "dt_adulto": "vacuna dT adulto",
+    "tdap": "vacuna Tdap",
+    "hva": "vacuna contra hepatitis A (HVA)",
+    "vph": "vacuna contra el virus del papiloma humano (VPH)",
+    "influenza": "vacuna contra influenza",
+    "vrs": "vacuna contra el virus respiratorio sincitial (VRS)",
+    "hexavalente_vih": "vacuna hexavalente para niñas y niños con VIH",
+    "meningococo": "vacuna meningococo",
+    "mab_vrs": "anticuerpo monoclonal contra el VRS",
+}
+
+# Palabras de la pregunta → campo canónico que pide. Expresiones regulares sobre
+# texto normalizado (minúsculas, sin tildes).
+FIELD_QUERY_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("COMPOSICION", r"\bcomposicion|\bcontiene\b|\bcomponentes?\b|\bserotipos?\b|\bcepas?\b"),
+    ("DOSIS", r"\bcantidad\b|\bml\b|\bdosis\b(?! de rescate)"),
+    ("CONSERVACION", r"\bconserva|\btemperatura|cadena de frio|\brefrigera|\balmacen"),
+    (
+        "VIA_Y_SITIO",
+        r"\bvia\b|\bsitio\b|\bmusculo\b|\bdeltoides\b|\bvasto\b|\bmuslo\b|"
+        r"\bintramuscular\b|\bsubcutanea\b|donde se (?:aplica|pone|coloca|administra)",
+    ),
+    ("CONTRAINDICACIONES", r"\bcontraindica|\balergi"),
+    ("EFECTOS_POSTVACUNALES", r"\befectos?\b|\breacciones?\b|post ?vacunal|\badversos?\b"),
+    (
+        "ESQUEMA_DE_VACUNACION",
+        r"\besquema\b(?! de vacunacion (?:incompleto|con dosis))|\bcalendario\b|"
+        r"a que edad|cuando se (?:aplica|pone|coloca|administra)",
+    ),
+    ("JERINGAS", r"\bjeringas?\b"),
+    ("PRESENTACION", r"\bpresentacion\b|\bmonodosis\b|\bmultidosis\b"),
+    ("USO_SIMULTANEO", r"\bsimultane|al mismo tiempo|junto (?:a|con) otras"),
+    ("INDICACIONES", r"\bindicaci|\bindicada\b|para que sirve"),
+    ("DESCRIPCION", r"\bdescripcion\b|que es la vacuna"),
+    ("TIPO_DE_INMUNIZACION", r"tipo de (?:vacuna|inmunizacion)|\batenuad|\binactivad"),
+)
+
+# Grupos de población: una pregunta que nombra uno no es ambigua aunque no nombre
+# vacuna ("¿qué vacunas recibe una gestante?").
+POPULATION_PATTERN = (
+    r"\bgestant|\bembaraz|\badolescen|\badult|recien nacido|\bbebe\b|\bneonat|"
+    r"personal de salud|\bvih\b|\bprematur|\bviajer|\bescolar|\blactante|"
+    r"\b\d{1,2}\s*(?:anos?|meses|mes)\b"
+)
+
+# Alérgenos y componentes que las fichas citan en contraindicaciones o composición:
+# permiten comprobar una presuposición de "alergia común".
+ALLERGENS: tuple[str, ...] = (
+    "huevo",
+    "pollo",
+    "gelatina",
+    "neomicina",
+    "latex",
+    "levadura",
+    "estreptomicina",
+    "polimixina",
+    "kanamicina",
+    "timerosal",
+)
+
 
 def ficha_slug(documento_id: str, seccion_numero: str) -> str | None:
     return FICHAS.get(documento_id, {}).get(seccion_numero)
@@ -180,8 +257,8 @@ _ALIASES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("hvb", re.compile(r"\bHvB\b|\bhepatitis b\b", _I)),
     ("hva", re.compile(r"\bHVA\b|\bHAV\b|\bhepatitis a\b", _I)),
     ("hib", re.compile(r"\bHib\b|haemophilus", _I)),
-    ("ipv", re.compile(r"\bIPV\b|antipolio inactivada|\bsalk\b", _I)),
-    ("apo", re.compile(r"\bAPO\b|antipolio oral|\bsabin\b", _I)),
+    ("ipv", re.compile(r"\bIPV\b|antipolio(?:mielitica)? inactivada|\bsalk\b", _I)),
+    ("apo", re.compile(r"\bAPO\b|antipolio(?:mielitica)? oral|\bsabin\b", _I)),
     ("rotavirus", re.compile(r"rotavirus", _I)),
     ("neumococo", re.compile(r"neumococ|\bPCV", _I)),
     ("spr", re.compile(r"\bSPR\b|sarampion,? paperas y rubeola", _I)),

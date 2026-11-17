@@ -7,6 +7,7 @@ from collections import Counter
 from nts_rag.config import get_settings
 from nts_rag.evaluation import (
     RowResult,
+    contamination,
     expected_sources,
     format_summary,
     row_type,
@@ -21,7 +22,7 @@ from nts_rag.index import (
     get_collection,
     load_chunks,
 )
-from nts_rag.rag.answer import NO_ANSWER, run_query
+from nts_rag.rag.answer import NO_ANSWER, plan_and_gather, run_query
 from nts_rag.rag.embeddings import Embedder
 from nts_rag.rag.retrieve import Retriever
 
@@ -208,7 +209,14 @@ def cmd_evaluar(args: argparse.Namespace) -> None:
             question = row["pregunta"]
             result = RowResult(row=row, tipo=row_type(row))
             sources = expected_sources(row)
-            chunks = retriever.search(question, k=max_k)
+            # Se mide la recuperación del sistema completo (plan + evidencia), la
+            # misma que usa /consulta; `--solo-busqueda` mide el buscador híbrido.
+            if args.solo_busqueda:
+                chunks = retriever.search(question, k=max_k)
+            else:
+                plan, evidence = plan_and_gather(retriever, question, k=max_k)
+                chunks = evidence.fuentes
+                result.contaminacion = contamination(plan, chunks[: ks[0]])
             for k in ks:
                 result.por_k[k] = score_retrieval(chunks, sources, k)
 
@@ -375,6 +383,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Solo recuperación: no ejecuta la respuesta ni mide el estado",
     )
     evaluar.add_argument("--json", action="store_true", help="Resumen en JSON")
+    evaluar.add_argument(
+        "--solo-busqueda",
+        action="store_true",
+        help="Mide el buscador híbrido sin plan ni slots (comparación con fases previas)",
+    )
     evaluar.set_defaults(func=cmd_evaluar)
 
     servir = sub.add_parser("servir", help="Levanta la API FastAPI")

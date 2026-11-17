@@ -86,8 +86,9 @@ class Settings(BaseSettings):
     chroma_collection: str = "nts_246"
 
     top_k: int = 6
-    vector_k: int = 12
-    bm25_k: int = 12
+    # Pool de candidatos de la búsqueda híbrida (Fase 2: 40–50 en total).
+    vector_k: int = 24
+    bm25_k: int = 24
 
     llm_base_url: str | None = None
     llm_model: str = "qwen2.5:7b"
