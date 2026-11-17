@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "generado_en": "2026-11-17T01:27:23.869570+00:00",
+  "generado_en": "2026-11-17T01:52:18.361684+00:00",
   "chunks": 2064,
   "tipos": {
     "campo": 543,
@@ -31,6 +31,7 @@
     "corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md": "96fc4e58bbdbcd765be36529481cc5fb82478d35acc1258ad2c5735fbeffbae9",
     "corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md": "f79f5917c28110edc0d7033986f04b00204f4b104dac2885b2a6fc2823254509",
     "corpus/markdown/nts-n-196-minsa-digiesp-2022.md": "68bdaa00731744cc180fc15cff22019b38438b4b50c30942e03f1eaa6ccb8199",
-    "data/chunks/nts-246.chunks.jsonl": "52cd4a742e3c9c5f176a24f38198b82d0d082a182d4c5b1345ecc6a9e8f415b5"
+    "data/chunks/nts-246.chunks.jsonl": "52cd4a742e3c9c5f176a24f38198b82d0d082a182d4c5b1345ecc6a9e8f415b5",
+    "src/nts_rag/catalogo.py": "25c229363cca8083f1b18a21787b33f3c88d13fd6d232d046f152ada1be32ea7"
   }
 }
