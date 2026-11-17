@@ -117,6 +117,22 @@ def contamination(plan: Any, chunks: list[RetrievedChunk]) -> int:
     return count
 
 
+def silent_substitution(plan: Any, chunks: list[RetrievedChunk], answer: Any) -> bool:
+    """Fase 4 (objetivo 0): se respondió sin avisar con algo distinto de lo pedido.
+
+    * La respuesta es `respondida` y alguna vacuna nombrada no tiene fuente propia.
+    * El plan reformuló la pregunta y la respuesta no lo muestra.
+    """
+
+    from nts_rag.rag.abstain import uncovered_entities
+
+    if answer.estado == "respondida" and plan.intencion != "comparacion_normas":
+        if uncovered_entities(plan, chunks):
+            return True
+    reformulada = getattr(answer, "reformulacion", None)
+    return bool(reformulada) and "Pregunta interpretada como" not in answer.text
+
+
 def coverage(row: dict[str, Any], chunks: list[RetrievedChunk]) -> tuple[bool, float] | None:
     """Fase 3: vacunas o celdas esperadas entre todas las fuentes (no solo el top-k).
 
@@ -162,6 +178,9 @@ class RowResult:
     contaminacion: int | None = None
     cobertura: tuple[bool, float] | None = None
     citas: bool | None = None
+    sustitucion: bool | None = None
+    llamadas: int | None = None
+    tokens: int | None = None
 
     @property
     def estado_esperado(self) -> str:
@@ -236,6 +255,21 @@ def summarize(results: list[RowResult], ks: list[int]) -> dict[str, Any]:
     )
     citadas = [r.citas for r in results if r.citas is not None]
     summary["citas"] = [sum(citadas), len(citadas)] if citadas else None
+    sustituciones = [r.sustitucion for r in results if r.sustitucion is not None]
+    summary["sustitucion_silenciosa"] = (
+        [sum(sustituciones), len(sustituciones)] if sustituciones else None
+    )
+    llamadas = [r.llamadas for r in results if r.llamadas is not None]
+    tokens = [r.tokens for r in results if r.tokens is not None]
+    summary["coste"] = (
+        {
+            "llamadas_media": _mean(llamadas),
+            "llamadas_max": max(llamadas),
+            "tokens_media": _mean(tokens),
+        }
+        if llamadas
+        else None
+    )
 
     reformuladas = [r.reformulacion for r in results if r.reformulacion is not None]
     summary["reformulacion_util"] = (
@@ -290,6 +324,14 @@ def format_summary(summary: dict[str, Any], ks: list[int], *, title: str) -> str
         lines.append(f"  cobertura de vacunas/celdas {ok}/{n} · precisión de la lista {precision}")
     if summary.get("citas"):
         lines.append("  ambas citas en la respuesta {}/{}".format(*summary["citas"]))
+    if summary.get("sustitucion_silenciosa"):
+        lines.append("  sustitución silenciosa {}/{}".format(*summary["sustitucion_silenciosa"]))
+    if summary.get("coste"):
+        coste = summary["coste"]
+        lines.append(
+            f"  llamadas LLM media {_fmt(coste['llamadas_media'])} · máx {coste['llamadas_max']}"
+            f" · tokens media {_fmt(coste['tokens_media'])}"
+        )
     reformulacion = summary["reformulacion_util"]
     if reformulacion:
         lines.append(f"  reformulación útil {reformulacion[0]}/{reformulacion[1]}")

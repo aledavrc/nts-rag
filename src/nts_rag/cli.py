@@ -14,6 +14,7 @@ from nts_rag.evaluation import (
     format_summary,
     row_type,
     score_retrieval,
+    silent_substitution,
     summarize,
     summarize_by_type,
 )
@@ -227,6 +228,10 @@ def cmd_evaluar(args: argparse.Namespace) -> None:
                 _, answer = run_query(settings, retriever, question, k=settings.top_k)
                 result.estado, result.motivo = _system_state(answer)
                 result.citas = citations_ok(row, answer.text)
+                result.llamadas = answer.llamadas
+                result.tokens = answer.tokens_entrada + answer.tokens_salida
+                if not args.solo_busqueda:
+                    result.sustitucion = silent_substitution(plan, chunks, answer)
                 reformulada = getattr(answer, "reformulacion", None)
                 if reformulada and sources:
                     result.reformulacion = score_retrieval(

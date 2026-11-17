@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import secrets
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 
 from nts_rag import __version__
-from nts_rag.config import DOC_TITLE, get_settings
+from nts_rag.config import DOC_TITLE, Settings, get_settings
+from nts_rag.querylog import log_query
 from nts_rag.rag.answer import run_query
 from nts_rag.rag.formatting import clip_markdown
 from nts_rag.rag.retrieve import Retriever
@@ -133,13 +135,38 @@ def v1_models() -> dict:
     }
 
 
-@app.post("/consulta", response_model=ConsultaResponse)
+def _settings(request: Request) -> Settings:
+    return getattr(request.app.state, "settings", None) or get_settings()
+
+
+def require_api_key(request: Request) -> None:
+    """Con `NTS_RAG_API_KEY` definida, exige la clave en `X-API-Key` o `Bearer`."""
+
+    expected = _settings(request).api_key
+    if not expected:
+        return
+    provided = request.headers.get("x-api-key") or ""
+    authorization = request.headers.get("authorization") or ""
+    if not provided and authorization.lower().startswith("bearer "):
+        provided = authorization[7:].strip()
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="Falta la clave de API o no es válida.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@app.post(
+    "/consulta", response_model=ConsultaResponse, dependencies=[Depends(require_api_key)]
+)
 def consulta(request: Request, body: ConsultaRequest) -> ConsultaResponse:
     retriever = _retriever(request)
-    settings = request.app.state.settings
+    settings = _settings(request)
     started = time.perf_counter()
     chunks, answer = run_query(settings, retriever, body.pregunta, k=body.k, filtros=body.filtros)
     elapsed = int((time.perf_counter() - started) * 1000)
+    log_query(settings, body.pregunta, chunks, answer, elapsed)
     return ConsultaResponse(
         respuesta=answer.text,
         fuentes=[_fuente(chunk) for chunk in chunks],
@@ -157,7 +184,7 @@ def consulta(request: Request, body: ConsultaRequest) -> ConsultaResponse:
     )
 
 
-@app.post("/buscar", response_model=BusquedaResponse)
+@app.post("/buscar", response_model=BusquedaResponse, dependencies=[Depends(require_api_key)])
 def buscar(request: Request, body: BusquedaRequest) -> BusquedaResponse:
     retriever = _retriever(request)
     started = time.perf_counter()

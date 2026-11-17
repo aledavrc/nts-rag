@@ -28,6 +28,30 @@ _client = httpx.Client()
 _USAGE: contextvars.ContextVar[list[tuple[int, int]] | None] = contextvars.ContextVar(
     "nts_rag_usage", default=None
 )
+# Máximo de llamadas de la consulta en curso (Fase 4: ≤ 3). None = sin límite.
+_BUDGET: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "nts_rag_budget", default=None
+)
+
+# Presupuesto de tokens por intención (§8.3) para el contexto del redactor. Se
+# estima a 4 caracteres por token y se reservan ~600 tokens para el prompt.
+TOKEN_BUDGET = {
+    "lookup": 2000,
+    "edad": 4000,
+    "conjunto": 6000,
+    "comparacion": 6000,
+    "comparacion_normas": 6000,
+    "comun": 6000,
+    "global": 8000,
+    "max_atributo": 8000,
+}
+DEFAULT_TOKEN_BUDGET = 12_000
+PROMPT_TOKENS = 600
+
+
+def context_chars(plan: Plan | None) -> int:
+    budget = TOKEN_BUDGET.get(plan.intencion, DEFAULT_TOKEN_BUDGET) if plan else None
+    return ((budget or DEFAULT_TOKEN_BUDGET) - PROMPT_TOKENS) * 4
 
 NO_ANSWER = "No se encontró esa información en la normativa cargada."
 # Una tabla de la matriz puede citar muchas celdas (vía y sitio: 24).
@@ -279,6 +303,11 @@ def _chat(
 
     if not settings.llm_base_url:
         return None
+    usage = _USAGE.get()
+    budget = _BUDGET.get()
+    if usage is not None and budget is not None and len(usage) >= budget:
+        logger.info("Presupuesto de %s llamadas agotado; se omite la llamada", budget)
+        return None
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if settings.llm_api_key:
@@ -292,15 +321,18 @@ def _chat(
             {"role": "user", "content": user},
         ],
     }
+    # La llamada cuenta aunque falle: consume presupuesto y latencia.
+    if usage is not None:
+        usage.append((0, 0))
     try:
         response = _client.post(url, json=payload, headers=headers, timeout=settings.llm_timeout)
         response.raise_for_status()
         data = response.json()
-        usage = _USAGE.get()
         if usage is not None:
             tokens = data.get("usage") or {}
-            usage.append(
-                (int(tokens.get("prompt_tokens") or 0), int(tokens.get("completion_tokens") or 0))
+            usage[-1] = (
+                int(tokens.get("prompt_tokens") or 0),
+                int(tokens.get("completion_tokens") or 0),
             )
         text = data["choices"][0]["message"]["content"].strip()
         return text or None
@@ -368,6 +400,7 @@ def _llm_answer(
     query: str,
     chunks: list[RetrievedChunk],
     verdict: Verdict | None = None,
+    plan: Plan | None = None,
 ) -> AnswerResult | None:
     instruction = STATE_INSTRUCTIONS.get(verdict.motivo or "", "") if verdict else ""
     extra = ""
@@ -381,7 +414,7 @@ def _llm_answer(
         settings,
         SYSTEM_PROMPT,
         f"Pregunta: {query}\n\n"
-        f"Fragmentos disponibles:\n{_context(chunks)}\n\n"
+        f"Fragmentos disponibles:\n{_context(chunks, context_chars(plan))}\n\n"
         f"{instruction}{extra}\n"
         "Responde citando con las etiquetas [cN].",
     )
@@ -458,7 +491,7 @@ def generate_answer(
         text = "\n".join(part for part in parts if part is not None).strip()
         return finish(AnswerResult(text=text, mode="estructurado"))
 
-    result = _llm_answer(settings, query, context, verdict)
+    result = _llm_answer(settings, query, context, verdict, plan)
     if result is not None and result.text.strip() != NO_ANSWER:
         if _verify_grounded(settings, query, result.text, context):
             if notes:
@@ -491,15 +524,24 @@ def run_query(
 
     usage: list[tuple[int, int]] = []
     token = _USAGE.set(usage)
+    budget_token = _BUDGET.set(settings.llm_max_calls)
     try:
         chat = None
         if settings.llm_base_url:
             def chat(system: str, user: str) -> str | None:
                 return _chat(settings, system, user, max_tokens=500)
 
-        plan, evidence = plan_and_gather(retriever, query, k=k, filtros=filtros, chat=chat)
+        # Presupuesto (Fase 4): se reservan la redacción y, si está activa, la
+        # verificación; el plan usa lo que queda (con 3: un intento, sin reintento).
+        reserve = 1 + (1 if settings.verify else 0)
+        attempts = max(0, min(2, settings.llm_max_calls - reserve))
+        plan, evidence = plan_and_gather(
+            retriever, query, k=k, filtros=filtros, chat=chat, attempts=attempts
+        )
         chunks = evidence.fuentes
-        if settings.llm_base_url and settings.rerank and plan.origen != "llm":
+        # El re-rankeo solo entra si el plan del LLM falló y aún cabe en el presupuesto.
+        rerank_fits = len(usage) + 1 + reserve <= settings.llm_max_calls
+        if settings.llm_base_url and settings.rerank and plan.origen != "llm" and rerank_fits:
             chunks = rerank_with_llm(settings, query, chunks, top_k=len(chunks))
         # La reformulación del plan acerca la pregunta al vocabulario de la norma
         # ("¿de qué está hecha?" → "composición"): el chequeo de alcance la usa.
@@ -527,6 +569,7 @@ def run_query(
         )
     finally:
         _USAGE.reset(token)
+        _BUDGET.reset(budget_token)
     result.llamadas = len(usage)
     result.tokens_entrada = sum(entrada for entrada, _ in usage)
     result.tokens_salida = sum(salida for _, salida in usage)
@@ -540,10 +583,11 @@ def plan_and_gather(
     k: int = 6,
     filtros=None,
     chat=None,
+    attempts: int = 2,
 ) -> tuple[Plan, Evidence]:
     """Plan + evidencia: lo que mide `evaluar` como recuperación del sistema."""
 
-    plan = plan_query(query, chat)
+    plan = plan_query(query, chat, attempts=attempts)
     if filtros is not None and getattr(filtros, "vigencia", None):
         plan.version = "ambas" if filtros.vigencia == "todas" else filtros.vigencia
     evidence = gather_evidence(retriever, query, plan, k=k, filtros=filtros)

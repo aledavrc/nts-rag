@@ -319,16 +319,25 @@ def _plan_from_llm(question: str, data: dict, fallback: Plan) -> Plan:
     )
 
 
-def plan_query(question: str, chat: Callable[[str, str], str | None] | None = None) -> Plan:
-    """Plan de la pregunta. `chat(system, user)` es la llamada al LLM, si la hay."""
+def plan_query(
+    question: str,
+    chat: Callable[[str, str], str | None] | None = None,
+    *,
+    attempts: int = 2,
+) -> Plan:
+    """Plan de la pregunta. `chat(system, user)` es la llamada al LLM, si la hay.
+
+    `attempts` limita los intentos (1 = sin reintento) según el presupuesto de
+    llamadas de la consulta; con 0 se usa directamente el plan determinista.
+    """
 
     fallback = deterministic_plan(question)
-    if chat is None:
+    if chat is None or attempts < 1:
         return fallback
 
     user = f"Pregunta: {question}"
     errors: list[str] = []
-    for _ in range(2):
+    for _ in range(attempts):
         text = chat(PLAN_SYSTEM, user if not errors else f"{user}\n\nCorrige: {'; '.join(errors)}")
         data = _parse_json(text or "")
         if data is None:

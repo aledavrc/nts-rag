@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from nts_rag.catalogo import ALLERGENS, VACUNA_NOMBRES
+from nts_rag.catalogo import ALLERGENS, FICHAS, VACUNA_NOMBRES
 from nts_rag.rag.interpret import Plan
 from nts_rag.rag.retrieve import RetrievedChunk
 from nts_rag.text import age_range_months, normalize_for_match
@@ -143,6 +143,28 @@ def check_shared_allergen(plan: Plan, chunks: list[dict[str, Any]]) -> list[str]
     return [f"La norma no declara un alérgeno común a todas las vacunas nombradas ({detail})."]
 
 
+def source_vaccines(chunk: RetrievedChunk) -> set[str]:
+    """Vacunas de una fuente: su ficha, su `vacuna_slug` o las que nombra su fila."""
+
+    meta = chunk.metadata
+    found = {slug for slug in str(meta.get("vacunas") or "").split(",") if slug}
+    if meta.get("vacuna_slug"):
+        found.add(str(meta["vacuna_slug"]))
+    ficha = FICHAS.get(chunk.documento_id, {}).get(chunk.seccion_numero)
+    if ficha:
+        found.add(ficha)
+    return found
+
+
+def uncovered_entities(plan: Plan, fuentes: list[RetrievedChunk]) -> list[str]:
+    """Vacunas nombradas en la pregunta sin ninguna fuente propia."""
+
+    covered: set[str] = set()
+    for chunk in fuentes:
+        covered |= source_vaccines(chunk)
+    return [slug for slug in plan.entidades if slug not in covered]
+
+
 def judge(
     plan: Plan,
     fuentes: list[RetrievedChunk],
@@ -161,6 +183,16 @@ def judge(
         return Verdict("abstenida", "fuera_de_alcance")
     if plan.requiere_aclaracion:
         return Verdict("aclaracion", "ambiguedad")
+
+    # Sustitución silenciosa (Fase 4, objetivo 0): si la pregunta nombra una vacuna
+    # y ninguna fuente es de ella, no se responde con lo que haya de otra.
+    sin_fuente = uncovered_entities(plan, fuentes)
+    if sin_fuente and plan.intencion != "comparacion_normas":
+        return Verdict(
+            "parcial",
+            "evidencia_insuficiente",
+            faltan_fuentes=[f"{VACUNA_NOMBRES.get(s, s)}: sin fuente propia" for s in sin_fuente],
+        )
 
     premisas = list(plan.premisas_no_soportadas)
     if plan.intencion == "comun" and "CONTRAINDICACIONES" in plan.campos:

@@ -6,6 +6,9 @@ __pycache__/
 .env
 pipelines/ocr/config.json
 
+# Registro de consultas (NTS_RAG_QUERY_LOG): puede contener datos de salud
+logs/
+
 # Artefactos generados (el corpus, los chunks y el índice sí se versionan)
 data/work/
 

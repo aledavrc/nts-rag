@@ -15,6 +15,9 @@ services:
       NTS_RAG_LLM_MODEL: ${NTS_RAG_LLM_MODEL:-qwen2.5:7b}
       NTS_RAG_LLM_API_KEY: ${NTS_RAG_LLM_API_KEY:-ollama}
       NTS_RAG_LLM_TIMEOUT: ${NTS_RAG_LLM_TIMEOUT:-60}
+      NTS_RAG_LLM_MAX_CALLS: ${NTS_RAG_LLM_MAX_CALLS:-3}
+      # Defínela si el puerto queda accesible fuera de esta máquina.
+      NTS_RAG_API_KEY: ${NTS_RAG_API_KEY:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

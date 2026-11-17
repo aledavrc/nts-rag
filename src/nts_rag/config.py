@@ -98,6 +98,15 @@ class Settings(BaseSettings):
     rerank: bool = True
     # Verificación de fidelidad de la respuesta del LLM frente a las fuentes.
     verify: bool = True
+    # Máximo de llamadas al LLM por consulta (plan + redacción + verificación).
+    llm_max_calls: int = 3
+
+    # Si se define, /consulta y /buscar exigen `X-API-Key` (o `Authorization:
+    # Bearer`) con este valor. Pensado para exponer la API fuera de localhost.
+    api_key: str | None = None
+    # Registro de consultas en JSONL (una línea por consulta). Desactivado por
+    # defecto: las preguntas pueden contener datos de salud.
+    query_log: Path | None = None
 
     @field_validator("llm_base_url", mode="before")
     @classmethod
