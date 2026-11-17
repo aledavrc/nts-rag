@@ -1,5 +1,5 @@
 {
-  "generated": "2026-11-14T23:36:50.980660+00:00",
+  "generated": "2026-11-17T01:19:53.079381+00:00",
   "config": {
     "max_chars": 1800,
     "overlap": 0
@@ -32,14 +32,28 @@
       "max_chars": 5861,
       "oversize": 0,
       "warnings": []
+    },
+    {
+      "file": "nts-n-196-minsa-digiesp-2022.md",
+      "chunks": 558,
+      "by_type": {
+        "text": 484,
+        "table": 74
+      },
+      "pages": "1-103",
+      "no_pages": 0,
+      "no_section": 0,
+      "max_chars": 5565,
+      "oversize": 0,
+      "warnings": []
     }
   ],
   "totals": {
-    "chunks": 648,
+    "chunks": 1206,
     "by_type": {
-      "text": 562,
-      "table": 86
+      "table": 160,
+      "text": 1046
     },
-    "chars": 299153
+    "chars": 542950
   }
 }

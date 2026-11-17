@@ -1,8 +1,36 @@
 {
-  "documento": "NTS N° 246-MINSA/DGIESP-2026",
-  "generado_en": "2026-11-16T14:33:18.192445+00:00",
-  "chunks": 1004,
+  "schema_version": 2,
+  "generado_en": "2026-11-17T01:27:23.869570+00:00",
+  "chunks": 2064,
+  "tipos": {
+    "campo": 543,
+    "fila": 315,
+    "tabla": 160,
+    "texto": 1046
+  },
+  "documentos": [
+    {
+      "id": "nts-246-2026",
+      "titulo": "NTS N° 246-MINSA/DGIESP-2026",
+      "version": 2026,
+      "vigencia": "vigente",
+      "chunks": 1153
+    },
+    {
+      "id": "nts-196-2022",
+      "titulo": "NTS N° 196-MINSA/DGIESP-2022",
+      "version": 2022,
+      "vigencia": "derogada",
+      "chunks": 911
+    }
+  ],
   "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
   "coleccion": "nts_246",
-  "origen": "data/chunks/nts-246.chunks.jsonl"
+  "origen": "data/chunks/nts-246.chunks.jsonl",
+  "fuentes": {
+    "corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md": "96fc4e58bbdbcd765be36529481cc5fb82478d35acc1258ad2c5735fbeffbae9",
+    "corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md": "f79f5917c28110edc0d7033986f04b00204f4b104dac2885b2a6fc2823254509",
+    "corpus/markdown/nts-n-196-minsa-digiesp-2022.md": "68bdaa00731744cc180fc15cff22019b38438b4b50c30942e03f1eaa6ccb8199",
+    "data/chunks/nts-246.chunks.jsonl": "52cd4a742e3c9c5f176a24f38198b82d0d082a182d4c5b1345ecc6a9e8f415b5"
+  }
 }
