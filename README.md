@@ -19,16 +19,20 @@ corpus/markdown/*.md
     → esquema v2: documento y vigencia, campos canónicos de las fichas (6.1.1.x),
       filas de las tablas de dominio, vacuna y edad normalizadas
     → embeddings FastEmbed + ChromaDB (data/index/)
-    → búsqueda vectorial + BM25 + RRF, solo en la norma vigente salvo señal de versión
-    → re-rankeo con LLM (si está configurado)
-    → respuesta LLM con verificación de fidelidad, o extractivo con citas
+    → plan de la consulta: intención, vacunas, campos, edad, versión, subconsultas
+      (LLM con validador si está configurado; determinista si no)
+    → evidencia: búsqueda vectorial + BM25 + RRF reordenada por el plan, más slots
+      que garantizan cobertura (campo por vacuna, calendario por edad, Anexo 2…)
+    → veredicto por código: respondida · parcial · abstenida · aclaración
+    → respuesta LLM con citas [cN] y verificación, o extractivo con citas
     → API FastAPI / CLI
 ```
 
-Estado actual (Fase 1): la recuperación acierta en lookups (20/20) y en la mayoría
-de preguntas por edad y dosis de rescate (recall@10 0.89 en agregación). Las
-preguntas de borde, las comparativas que necesitan un diff y la abstención fina
-son el foco de las Fases 2 y 3, descritas en
+Estado actual (Fase 2): lookups 20/20, preguntas por edad y rescate con todas sus
+fuentes (recall@10 1.00 en agregación) y el estado correcto en las 45 preguntas del
+eval (respondida, parcial con su motivo, abstención o aclaración). Las comparativas
+que necesitan un diff entre normas y los superlativos son el foco de la Fase 3,
+descrita en
 [`docs/CONTEXTO_MEJORAS.md`](docs/CONTEXTO_MEJORAS.md).
 
 La recuperación combina:
@@ -153,6 +157,15 @@ Respuesta abreviada:
     }
   ],
   "modo": "extractivo",
+  "estado": "respondida",
+  "motivo": null,
+  "reformulacion": null,
+  "supuestos": ["Se consulta la norma vigente (NTS 246-2026)."],
+  "faltan_fuentes": [],
+  "conflictos": [],
+  "llamadas_llm": 0,
+  "tokens_entrada": 0,
+  "tokens_salida": 0,
   "formato": "markdown",
   "tiempo_ms": 45
 }
@@ -199,19 +212,29 @@ NTS_RAG_LLM_MODEL=qwen2.5:7b \
 make serve
 ```
 
-Con LLM configurado, la consulta pasa por tres pasos:
+Con LLM configurado, la consulta hace como mucho tres llamadas:
 
-1. **Re-rankeo**: se recuperan ~20 candidatos con vectorial+BM25 y el LLM los
-   reordena por relevancia para quedarse con los mejores `k`. Se omite con
-   `NTS_RAG_RERANK=false` o con `--sin-rerank` en la CLI.
-2. **Respuesta**: el LLM redacta usando únicamente esos fragmentos, citando
-   página y sección, y absteniéndose si no está la información.
+1. **Plan**: el LLM interpreta la pregunta (intención, vacunas, campos, edad,
+   versión, subconsultas, premisas dudosas) en un JSON que el código valida contra
+   los catálogos; si no valida tras un reintento, se usa el plan determinista. El
+   plan **sustituye al re-rankeo**: trae filtros exactos en vez de reordenar
+   candidatos. (El re-rankeo solo se usa si el plan del LLM falla y
+   `NTS_RAG_RERANK=true`.)
+2. **Respuesta**: el LLM redacta usando únicamente la evidencia (fuentes más los
+   hermanos de su sección: ficha completa, filas de la misma tabla) y cita con
+   etiquetas `[c1]`, `[c2]`… que el código sustituye por la cita exacta desde los
+   metadatos. Una cita escrita de memoria se borra; una respuesta sin ninguna cita
+   válida se descarta. El estado y el motivo (conflicto, premisa…) los decide el
+   código antes de redactar.
 3. **Verificación de fidelidad**: un pase del LLM comprueba que todas las
    afirmaciones se apoyan en las fuentes; si no, se devuelve el fragmento
    verbatim (extractivo). Se desactiva con `NTS_RAG_VERIFY=false`.
 
-Sin LLM, la verificación y el re-rankeo se omiten y la respuesta es siempre el
-fragmento verbatim con su cita.
+Sin LLM, el plan es determinista, la consulta no hace ninguna llamada y la respuesta
+son los fragmentos verbatim con su cita (uno en los lookups, uno por fuente
+principal en las preguntas por edad, conjuntos o comparaciones), precedidos de las
+notas de respuesta parcial, discrepancias o premisas cuando las hay. `/consulta`
+devuelve el coste en `llamadas_llm`, `tokens_entrada` y `tokens_salida`.
 
 ## Docker
 
@@ -265,8 +288,11 @@ nts-rag/
 │   ├── text.py                   # normalización y tokens
 │   └── rag/
 │       ├── embeddings.py         # FastEmbed / ONNX
+│       ├── interpret.py          # plan de consulta (LLM + validador / determinista)
 │       ├── retrieve.py           # vectorial + BM25 + RRF
-│       ├── answer.py             # LLM opcional / extractivo
+│       ├── evidence.py           # slots, diversidad y expansión de sección
+│       ├── abstain.py            # veredicto: estado, motivo, conflictos, premisas
+│       ├── answer.py             # pipeline, citas [cN], LLM opcional / extractivo
 │       └── formatting.py         # Markdown para respuestas
 ├── tests/
 ├── Dockerfile
@@ -286,8 +312,8 @@ nts-rag/
 | `NTS_RAG_EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Modelo de embeddings |
 | `NTS_RAG_CHROMA_COLLECTION` | `nts_246` | Colección ChromaDB |
 | `NTS_RAG_TOP_K` | `6` | Fuentes devueltas |
-| `NTS_RAG_VECTOR_K` | `12` | Candidatos vectoriales |
-| `NTS_RAG_BM25_K` | `12` | Candidatos léxicos |
+| `NTS_RAG_VECTOR_K` | `24` | Candidatos vectoriales |
+| `NTS_RAG_BM25_K` | `24` | Candidatos léxicos |
 | `NTS_RAG_LLM_BASE_URL` | vacío | Activa el re-rankeo y el modo redactado |
 | `NTS_RAG_LLM_MODEL` | `qwen2.5:7b` | Modelo del LLM |
 | `NTS_RAG_LLM_API_KEY` | `ollama` | Clave del LLM |
@@ -312,16 +338,23 @@ devuelve el resumen en JSON.
 | `eval/ambiguedades.jsonl` | 4 preguntas de borde con estado/motivo esperados + 3 negativas |
 | `eval/comparativas.jsonl` | 3 comparativas 2022/2026 |
 
-Resultados actuales (Fase 1, modo extractivo), en recall@10:
+`evaluar` mide la recuperación del sistema completo (plan + evidencia, la de
+`/consulta`); `--solo-busqueda` mide el buscador híbrido solo. También informa la
+`contaminación`: fuentes de la norma derogada sin pedirla o fichas de vacunas que la
+pregunta no nombra.
 
-| Tipo | Fase 0 | Fase 1 |
-|---|---|---|
-| lookups | 1.00 (20/20) | 1.00 (20/20) |
-| agregación | 0.39 (2/7 completas) | **0.89** (6/7 completas) |
-| borde | 0.31 | 0.31 |
-| comparativas | 0.33 | 0.50 |
+Resultados actuales (modo extractivo, sin LLM), en recall@10:
 
-La abstención es correcta en 6/9 negativas. El detalle está en
+| Tipo | Fase 0 | Fase 1 | Fase 2 |
+|---|---|---|---|
+| lookups | 1.00 (20/20) | 1.00 (20/20) | 1.00 (20/20) |
+| agregación | 0.39 (2/7 completas) | 0.89 (6/7) | **1.00** (7/7) |
+| borde | 0.31 | 0.31 | **0.82** |
+| comparativas | 0.33 | 0.50 | 0.67 |
+| estado exacto | 38/45 | 39/45 | **45/45** |
+
+En la Fase 2 la abstención es correcta en 9/9 negativas, sin abstenciones indebidas,
+el motivo coincide en 7/7 y la contaminación es 0. El detalle está en
 [`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
 `tests/test_smoke_index.py` comprueba en CI la estructura del índice versionado
 (totales, fichas, campos, lint, IDs y frescura del manifiesto).
@@ -330,15 +363,17 @@ La abstención es correcta en 6/9 negativas. El detalle está en
 
 - El sistema solo conoce las normas indexadas: NTS 246-2026 (vigente) y NTS
   196-2022 (derogada, solo bajo petición o comparación).
-- La recuperación es vectorial + BM25 con re-rankeo LLM opcional; en preguntas
-  ambiguas o con vocabulario muy genérico puede no acertar el fragmento exacto.
+- En preguntas con vocabulario muy genérico la búsqueda puede no acertar el
+  fragmento exacto ("¿cuándo se deja de vacunar en el vasto externo?" no trae la
+  fila del Anexo 6).
 - Las comparaciones entre normas todavía dependen de la búsqueda: no hay un diff
-  campo a campo (Fase 3). En el caso guía ("niño de 5 años sin vacunas") las tablas
-  de programación del Anexo 17 aún desplazan al calendario 6.2.2 al sexto puesto.
-- La abstención es heurística: una pregunta ajena que comparta vocabulario con
-  la norma puede devolver un fragmento relacionado en lugar de abstenerse.
-- El modo extractivo no redacta una síntesis; devuelve el fragmento más
-  relevante con su cita.
+  campo a campo ("vacunas nuevas de 2026" falla). Llega en la Fase 3.
+- El veredicto usa reglas deterministas (catálogos, edades, alérgenos): una
+  pregunta fuera de alcance que comparta vocabulario con la norma puede no
+  abstenerse, y una discrepancia que no sea de edad no se detecta todavía.
+- El modo extractivo no redacta una síntesis; devuelve los fragmentos con su
+  cita. La ruta con LLM está probada con un LLM simulado, no medida con un modelo
+  real.
 - Una respuesta bien formada no garantiza la exactitud del dato clínico:
   contrasta siempre con el Markdown o el PDF original.
 

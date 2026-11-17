@@ -2,9 +2,11 @@
 
 > **Traspaso.** Análisis cerrado. **Fase 0 hecha** (sets de evaluación, métricas y
 > línea base en §9.3). **Fase 1 hecha**: esquema v2 reindexado (2.064 chunks, NTS
-> 246-2026 + NTS 196-2022), smoke tests de §11 en verde; resultados y desviaciones
-> en §9.3 y §10.
-> Fecha: 2026-11-16 · Siguiente paso: Fase 2 de §10.
+> 246-2026 + NTS 196-2022), smoke tests de §11 en verde. **Fase 2 hecha**: plan de
+> consulta (LLM con validador, o determinista), evidencia por slots, expansión de
+> sección, veredicto por código y citas `[cN]`; estado exacto 45/45 y contaminación
+> 0. Resultados y desviaciones en §9.3 y §10.
+> Fecha: 2026-11-16 · Siguiente paso: Fase 3 de §10.
 
 ## 0. TL;DR y mandato
 
@@ -539,6 +541,46 @@ Umbrales de Fase 1:
   ocupan el top-5 y 6.2.2 queda en la posición 6. Excluirlas de la ruta de edad
   es trabajo de la Fase 2 (§12).
 
+**Resultado Fase 2** (2026-11-16, mismo índice v2, modo extractivo **sin LLM**: el
+plan es el determinista). `evaluar` mide ahora la recuperación del sistema completo
+(plan + evidencia, la misma de `/consulta`); `--solo-busqueda` mide el buscador
+híbrido solo.
+
+| Tipo | n | recall@5 | recall@10 | completas @5/@10 | decisión | estado exacto | solo búsqueda @10 |
+|---|---|---|---|---|---|---|---|
+| lookup | 20 | 1.00 | 1.00 | 20/20 | 20/20 | 20/20 | 1.00 |
+| agregacion | 7 | **1.00** | **1.00** | 7/7 | 7/7 | 7/7 | 0.75 |
+| borde | 4 | 0.47 | 0.82 | 1/2 | 4/4 | **4/4** | 0.66 |
+| comparacion | 3 | 0.67 | 0.67 | 2/2 | 3/3 | 3/3 | 0.50 |
+| negativa | 11 | 1.00 | 1.00 | 2/2 | 11/11 | **11/11** | 0.50 |
+| **total** | 45 | 0.91 | 0.95 | 32/33 | **45/45** | **45/45** | 0.84 |
+
+Abstención: 9/9 cuando debe, 0/36 indebidas; motivo exacto 7/7. Umbrales:
+
+| Fase | Métrica | Objetivo | Resultado |
+|---|---|---|---|
+| Fase 2 | contaminación | 0 | **0** fuentes en 45 preguntas (@5) ✅ |
+| Fase 2 | expansión de sección | 13/13 | **42/42 fichas** completas (12/13 en APO y rotavirus por `NO_APLICA`) ✅ |
+| Fase 1 | lookups | 20/20 | 20/20 ✅ (se mantiene) |
+| Fase 3 | abstención en negativas | 5/5 | 9/9 ✅ (adelantado) |
+| Fase 4 | llamadas por consulta | ≤ 3 | 3 con LLM (plan + redacción + verificación), 0 sin LLM ✅ en test |
+
+- El caso guía ya trae 6.2.2 y Anexo 2 en el top-5: la ruta de edad añade la
+  mejor fila del calendario y del Anexo 2 y penaliza los anexos operativos (el
+  señuelo p. 121).
+- `contaminación` cuenta fuentes de la norma derogada sin pedirla y fichas de una
+  vacuna no nombrada cuando la pregunta nombra alguna. Al principio daba 6 (HvB
+  junto a HVA, IPV junto a APO, hexavalente junto a pentavalente): esas fichas se
+  descartan de las fuentes, no solo se penalizan.
+- Siguen fallando, y es trabajo de la Fase 3: "vacunas nuevas 2026 vs 2022" (0/6,
+  necesita el diff) y "vasto externo" (la fila del Anexo 6 no entra en el top-5).
+  "más cepas" encuentra 2/5 fichas porque el barrido es léxico (serotipos,
+  serogrupos…); la matriz con valores normalizados lo resolverá.
+- **Sin LLM en este equipo** (ni Ollama ni `.env`): la ruta del plan con LLM, la
+  redacción con `[cN]` y el conteo de llamadas están cubiertos con un LLM simulado
+  (`tests/test_phase2.py`), no medidos con un modelo real. `reformulacion_util`
+  sigue en n/d por lo mismo.
+
 | Fase | Métrica | Objetivo |
 |---|---|---|
 | Fase 1 | recall@10 agregación | ≥ 0.80 |
@@ -623,7 +665,41 @@ Plan original:
 
 **Reindexado obligatorio** y determinista (dos pasadas, mismos IDs).
 
-### Fase 2 — Recuperación y plan
+### Fase 2 — Recuperación y plan ✅
+
+**Hecho** (resultados en §9.3):
+
+| Archivo | Cambio aplicado |
+|---|---|
+| `rag/interpret.py` (nuevo) | `Plan` con el contrato de §7.2. Con LLM: el plan lo propone el LLM (1 llamada, **sustituye al re-rankeo**), se valida contra los catálogos (vacunas, campos, versión, edad, ≤4 subconsultas, ≤6 entidades), un reintento con los errores y, si falla, plan determinista. Sin LLM: plan determinista con los mismos catálogos (intención, vacunas, campos, edad, versión, rescate, subconsultas por oración y por "y" + interrogativo, aclaración, juicio de valor y posología). |
+| `rag/evidence.py` (nuevo) | Pool 24+24 reordenado por el plan; slots deterministas (campo exacto por vacuna y norma, ficha, calendario por edad, Anexo 2 para rescate/límites, barrido de campo, una fuente por subconsulta); fichas de vacunas no nombradas fuera; ≤2 por sección; `expand_context` con presupuesto de 16k caracteres. |
+| `rag/abstain.py` (nuevo) | Veredicto por código en el orden de §7.3: juicio/posología → sin fuentes → fuera de alcance → aclaración → premisa (alérgeno común) → conflicto (edad de la ficha frente al calendario) → evidencia insuficiente → métrica no comparable → respondida. |
+| `rag/answer.py` | Contrato de estado en `AnswerResult`; el LLM cita con `[cN]` y el código pone la cita desde los metadatos (las citas escritas de memoria se borran; sin ninguna cita válida, extractivo); notas de parcial/conflicto/premisa; extractivo con un fragmento por fuente principal fuera de los lookups; conteo de llamadas y tokens por consulta. |
+| `retrieve.py` / `config.py` | Pool por defecto 24+24 (antes 12+12). |
+| `schemas.py` / `api.py` | `/consulta` devuelve `estado`, `motivo`, `reformulacion`, `supuestos`, `faltan_fuentes`, `conflictos`, `llamadas_llm` y tokens. |
+| `evaluation.py` / `cli.py` | `evaluar` mide el sistema completo, `contaminacion` y `--solo-busqueda`. |
+| `index.py` | El manifiesto también registra el hash de `catalogo.py`: cambiar el catálogo deja el índice desfasado y `doctor` lo avisa. |
+
+**Desviaciones y decisiones tomadas:**
+
+- Planificador **determinista además del LLM**: sin LLM configurado (el caso por
+  defecto) el sistema también necesita plan, y el validador vale para los dos. Es
+  también el respaldo cuando el plan del LLM no valida dos veces (en lugar de
+  devolver `parcial`, que penalizaría una pregunta bien formada por un fallo del
+  planificador; queda un aviso en el plan).
+- El filtro de slug/edad no es un filtro duro de Chroma: los chunks de texto no
+  llevan edad. Se aplica como slots y como reordenación.
+- "Posología de un medicamento" (paracetamol, antibiótico…) se abstiene con
+  `requiere_conocimiento_externo` (§7.1, documental ≠ clínica), igual que los
+  juicios de valor ("mejor vacuna").
+- Verbos de la pregunta ("toca", "vacunar", "previene", "colocar"…) son genéricos
+  en `is_answerable`, y un sinónimo cumple su término sin subir el listón: antes
+  "¿qué le toca a un niño de 5 años?" se abstenía.
+- La reformulación del plan (LLM) se usa también para el chequeo de alcance.
+- Anexo E resuelto: #9 la expansión de fichas es **siempre** (los campos son
+  cortos); la de filas, solo de la misma tabla y filtrada por edad.
+
+Plan original:
 
 | Archivo | Cambio |
 |---|---|
