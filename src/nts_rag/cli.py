@@ -5,11 +5,19 @@ import json
 from collections import Counter
 
 from nts_rag.config import get_settings
+from nts_rag.evaluation import (
+    RowResult,
+    expected_sources,
+    format_summary,
+    row_type,
+    score_retrieval,
+    summarize,
+    summarize_by_type,
+)
 from nts_rag.index import build_index, get_collection
-from nts_rag.rag.answer import run_query
+from nts_rag.rag.answer import NO_ANSWER, run_query
 from nts_rag.rag.embeddings import Embedder
 from nts_rag.rag.retrieve import Retriever
-from nts_rag.text import normalize_for_match
 
 
 def cmd_indexar(args: argparse.Namespace) -> None:
@@ -167,43 +175,78 @@ def cmd_inspeccionar(args: argparse.Namespace) -> None:
         print(f"  txt: {result['fragmento']}")
 
 
+def _system_state(result) -> tuple[str, str | None]:
+    """Estado y motivo que devuelve hoy el sistema.
+
+    La v1 solo distingue responder de abstenerse; cuando `AnswerResult` tenga
+    `estado`/`motivo` (Fase 2) se usarán directamente.
+    """
+
+    estado = getattr(result, "estado", None)
+    if estado is None:
+        estado = "abstenida" if result.text.strip() == NO_ANSWER else "respondida"
+    return estado, getattr(result, "motivo", None)
+
+
 def cmd_evaluar(args: argparse.Namespace) -> None:
     settings = get_settings()
     retriever = Retriever(settings)
-    rows = [
-        json.loads(line)
-        for line in open(args.archivo, encoding="utf-8")
-        if line.strip()
-    ]
-    hits = 0
-    evaluables = 0
-    for row in rows:
-        page = row.get("pagina")
-        if page is None:
-            continue
-        evaluables += 1
-        expected_section = normalize_for_match(row.get("seccion", ""))
-        chunks = retriever.search(row["pregunta"], k=args.k)
-        hit = any(
-            chunk.pagina <= page <= chunk.pagina_fin
-            and (
-                not expected_section
-                or expected_section
-                in normalize_for_match(f"{chunk.seccion} {chunk.seccion_ruta}")
-            )
-            for chunk in chunks
-        )
-        hits += int(hit)
-        estado = "OK" if hit else "FALLA"
-        print(f"[{estado}] p.{page} | {row['pregunta'][:90]}")
-        if not hit:
-            encontrados = ", ".join(
-                f"p.{c.pagina}-{c.pagina_fin}" for c in chunks[:5]
-            )
-            print(f"        recuperado: {encontrados}")
-    if evaluables:
-        print(f"\nHit@{args.k}: {hits}/{evaluables} = {hits / evaluables:.2f}")
-    print(f"Preguntas fuera de alcance: {len(rows) - evaluables}")
+    ks = sorted(set(args.k))
+    max_k = ks[-1]
+
+    results: list[RowResult] = []
+    for path in args.archivo:
+        rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+        print(f"\n## {path}")
+        for row in rows:
+            question = row["pregunta"]
+            result = RowResult(row=row, tipo=row_type(row))
+            sources = expected_sources(row)
+            chunks = retriever.search(question, k=max_k)
+            for k in ks:
+                result.por_k[k] = score_retrieval(chunks, sources, k)
+
+            if not args.sin_respuesta:
+                _, answer = run_query(settings, retriever, question, k=settings.top_k)
+                result.estado, result.motivo = _system_state(answer)
+                reformulada = getattr(answer, "reformulacion", None)
+                if reformulada and sources:
+                    result.reformulacion = score_retrieval(
+                        retriever.search(reformulada, k=max_k), sources, max_k
+                    )
+            results.append(result)
+
+            if sources:
+                score = result.por_k[ks[0]]
+                marca = "OK" if score.completa else ("PARCIAL" if score.hit else "FALLA")
+                detalle = f"{sum(score.encontradas)}/{len(sources)} fuentes@{ks[0]}"
+            else:
+                marca, detalle = "NEG", "sin fuentes"
+            if result.estado is not None:
+                detalle += f" · estado {result.estado} (esperado {result.estado_esperado})"
+            print(f"[{marca}] {result.tipo} · {detalle} | {question[:80]}")
+            if sources and not result.por_k[ks[0]].completa:
+                encontrados = ", ".join(
+                    f"p.{c.pagina}-{c.pagina_fin} {c.seccion_numero or c.seccion[:20]}"
+                    for c in chunks[: ks[0]]
+                )
+                print(f"        recuperado: {encontrados}")
+
+    resumen = summarize(results, ks)
+    por_tipo = summarize_by_type(results, ks) if args.por_tipo else {}
+    if args.json:
+        print(json.dumps({"total": resumen, "por_tipo": por_tipo}, ensure_ascii=False, indent=2))
+        return
+
+    print()
+    print(format_summary(resumen, ks, title="total"))
+    for tipo, summary in por_tipo.items():
+        print(format_summary(summary, ks, title=tipo))
+    # Línea compatible con la salida anterior (Hit@k de lookups).
+    n = resumen["con_fuentes"]
+    if n:
+        hits = resumen[f"@{ks[0]}"]["hit"]
+        print(f"\nHit@{ks[0]}: {hits}/{n} = {hits / n:.2f}")
 
 
 def cmd_doctor(args: argparse.Namespace) -> None:
@@ -299,9 +342,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspeccionar.set_defaults(func=cmd_inspeccionar)
 
-    evaluar = sub.add_parser("evaluar", help="Mide Hit@k sobre un archivo JSONL")
-    evaluar.add_argument("--archivo", default="eval/preguntas.jsonl")
-    evaluar.add_argument("-k", type=int, default=5)
+    evaluar = sub.add_parser(
+        "evaluar", help="Mide recuperación (hit, recall, completas, precisión) y abstención"
+    )
+    evaluar.add_argument(
+        "--archivo", nargs="+", default=["eval/preguntas.jsonl"], help="Uno o varios JSONL"
+    )
+    evaluar.add_argument(
+        "-k", type=int, nargs="+", default=[5], help="Uno o varios cortes, p. ej. -k 5 10 20"
+    )
+    evaluar.add_argument("--por-tipo", action="store_true", help="Desglosa por tipo de pregunta")
+    evaluar.add_argument(
+        "--sin-respuesta",
+        action="store_true",
+        help="Solo recuperación: no ejecuta la respuesta ni mide el estado",
+    )
+    evaluar.add_argument("--json", action="store_true", help="Resumen en JSON")
     evaluar.set_defaults(func=cmd_evaluar)
 
     servir = sub.add_parser("servir", help="Levanta la API FastAPI")

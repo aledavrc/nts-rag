@@ -1,8 +1,9 @@
 # Contexto de mejoras del RAG — NTS 246 / NTS 196
 
 > **Traspaso.** Análisis cerrado; correcciones previas aplicadas (índice de 1.004
-> chunks). El esquema v2 y el reindexado siguen pendientes.
-> Fecha: 2026-11-16 · Siguiente paso: Fases 0 y 1 de §10.
+> chunks). **Fase 0 hecha** (sets de evaluación, métricas y línea base en §9.3).
+> El esquema v2 y el reindexado siguen pendientes.
+> Fecha: 2026-11-16 · Siguiente paso: Fase 1 de §10.
 
 ## 0. TL;DR y mandato
 
@@ -443,9 +444,17 @@ tipo en `evaluar`.
 ### 9.1 Sets
 
 - `eval/preguntas.jsonl`: 20 lookups + 5 negativas (regresión).
-- `eval/agregacion.jsonl`: 7 de agregación + 3 negativas (nuevo).
-- `eval/ambiguedades.jsonl`: las 4 preguntas de borde + negativas, con `estado` y
-  `motivo` esperados (nuevo).
+- `eval/agregacion.jsonl`: 7 de agregación + 3 negativas.
+- `eval/ambiguedades.jsonl`: las 4 preguntas de borde + 3 negativas, con `estado` y
+  `motivo` esperados.
+- `eval/comparativas.jsonl`: las 3 comparativas 2022/2026 del Anexo C. Las fuentes
+  2022 llevan `documento: nts-196-2022`; hasta la Fase 1 no pueden recuperarse.
+
+Formato v2 de fila: `id`, `pregunta`, `tipo`, `fuentes_esperadas`
+(`[{documento?, pagina, pagina_fin?, seccion}]`, `documento` por defecto
+`nts-246-2026`), `estado_esperado`, `motivo_esperado?`, `clave`. Las filas
+heredadas (`pagina` + `seccion`) se leen como una única fuente esperada. La lógica
+está en `src/nts_rag/evaluation.py` (pura, con tests en `tests/test_evaluation.py`).
 
 ### 9.2 Métricas
 
@@ -453,9 +462,49 @@ tipo en `evaluar`.
 `reformulacion_util` (la reescritura recupera las fuentes esperadas) y
 `sustitucion_silenciosa = 0`. Reporte **por tipo**.
 
+Implementadas en `evaluar` (Fase 0): `hit`, `recall`, `completas` y `precision` por
+corte (`-k 5 10 20`); decisión responder/abstenerse, estado exacto, abstención
+indebida y motivo exacto; `--por-tipo`, `--json`, `--sin-respuesta`. Una sección
+casa como unidad completa (`6.1.1.1` ≠ `6.1.1.10`, `ANEXO 1` ≠ `ANEXO 10`) y las
+páginas por solape de rangos. `reformulacion_util` se calcula cuando
+`AnswerResult` exponga `reformulacion` (Fase 2); `estado`/`motivo` se leen de
+`AnswerResult` cuando existan, y mientras tanto se deriva `abstenida`/`respondida`.
+`sustitucion_silenciosa` queda para la Fase 4 (requiere el contrato de citas).
+
 ### 9.3 Línea base y umbrales
 
 Baseline v1 (994): recall@5 0.29, @10 0.36, @20 0.57; completas 1/7, 1/7, 2/7.
+
+**Línea base Fase 0** (2026-11-16, índice de 1.004 chunks, modo extractivo sin LLM):
+
+```bash
+python -m nts_rag.cli evaluar --archivo eval/preguntas.jsonl eval/agregacion.jsonl \
+  eval/ambiguedades.jsonl eval/comparativas.jsonl -k 5 10 20 --por-tipo
+```
+
+| Tipo | n | recall@5 | recall@10 | recall@20 | completas @5/@10/@20 | decisión | estado exacto |
+|---|---|---|---|---|---|---|---|
+| lookup | 20 | 1.00 | 1.00 | 1.00 | 20/20/20 | 20/20 | 20/20 |
+| agregacion | 7 | 0.39 | 0.39 | 0.54 | 2/2/2 | 6/7 | 6/7 |
+| borde | 4 | 0.26 | 0.31 | 0.47 | 0/0/1 | 3/4 | 1/4 |
+| comparacion | 3 | 0.25 | 0.33 | 0.33 | 0/0/0 | 3/3 | 3/3 |
+| negativa | 11 | 0.75¹ | 0.75 | 0.75 | 1/1/1 | 8/11 | 8/11 |
+| **total** | 45 | 0.72 | 0.74 | 0.78 | 23/23/24 | 40/45 | 38/45 |
+
+¹ Solo 2 negativas tienen fuentes (las de "no procede": rotavirus a los 12 meses,
+BCG a los 6 años).
+
+- Abstención: 6/9 cuando debe (fallan paracetamol, "mejor vacuna" y "¿cuántas
+  dosis?"); 2/36 abstenciones indebidas ("qué toca a los 5 años" y "más cepas").
+  Motivo exacto 0/7: la v1 no produce motivos.
+- La recuperación casi no mejora de @10 a @20 porque el pool de `search` es
+  12+12 candidatos (causa raíz 5): pedir más `k` no trae más.
+- Este set da recall@10 0.39 en agregación frente al 0.36 de la medición previa
+  sobre 994 chunks. No son directamente comparables (set y fuentes distintos):
+  **la referencia para los umbrales es esta tabla**.
+- Agregación 6 usa como contraindicadas en el embarazo 6.1.1.11 (SPR), 6.1.1.12 (SR)
+  y 6.1.1.14 (AMA): son las fichas cuyo campo `CONTRAINDICACIÓN` menciona
+  embarazo/gestantes. La ficha 6.1.1.19 (VPH) que citaba el Anexo C no lo menciona.
 
 | Fase | Métrica | Objetivo |
 |---|---|---|
@@ -476,12 +525,12 @@ Baseline v1 (994): recall@5 0.29, @10 0.36, @20 0.57; completas 1/7, 1/7, 2/7.
 
 ## 10. Plan
 
-### Fase 0 — Evaluación
+### Fase 0 — Evaluación ✅
 
-1. `eval/agregacion.jsonl` (7 + 3 negativas).
-2. `eval/ambiguedades.jsonl` (4 de borde + negativas, con estado/motivo).
-3. `cmd_evaluar`: recall, completa, precision, abstiene, reformulación, `--por-tipo`.
-4. Registrar la línea base.
+1. ✅ `eval/agregacion.jsonl` (7 + 3 negativas).
+2. ✅ `eval/ambiguedades.jsonl` (4 de borde + 3 negativas, con estado/motivo).
+3. ✅ `cmd_evaluar`: recall, completa, precision, abstiene, reformulación, `--por-tipo`.
+4. ✅ Línea base registrada en §9.3 (más `eval/comparativas.jsonl`).
 
 ### Fase 1 — Esquema v2 + reindexado
 
@@ -612,7 +661,7 @@ Trampas: `dt_pediatrico` vs `dt_adulto` vs `dpt`; `spr` vs `sr`; `hexavalente` v
 **Agregación (7):** niño de 5 años sin vacunas (6.2.2 + Anexo 2); qué toca a los 5
 (6.2.2); adolescente 13 (6.2.3 + Anexo 2); recuperables/no recuperables (Anexo 2);
 esquema incompleto de pentavalente (6.1.1.4 + Anexo 2); gestante y contraindicación
-(6.2.1 + 6.1.1.19); rescate BCG (Anexo 2 + 6.1.1.1).
+(6.2.1 + 6.1.1.11/12/14; ver nota en §9.3); rescate BCG (Anexo 2 + 6.1.1.1).
 
 **Negativas (3):** rotavirus a los 12 meses (no procede); BCG a los 6 años (no
 procede); ébola (fuera de alcance).

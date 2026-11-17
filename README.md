@@ -216,7 +216,7 @@ nts-rag/
 │   ├── PROCESO.md                # decisiones y verificaciones del OCR
 │   ├── CONTEXTO_MEJORAS.md       # estado, análisis y plan de mejoras
 │   └── COMANDOS.org              # recetario de pruebas de API/CLI
-├── eval/preguntas.jsonl          # 20 preguntas con respuesta + 5 fuera de alcance
+├── eval/                         # sets de evaluación (lookup, agregación, borde, comparativas)
 ├── models/                       # caché de FastEmbed (ignorada)
 ├── pipelines/ocr/                # procedimiento reutilizable PDF → Markdown
 │   ├── README.md
@@ -267,19 +267,25 @@ nts-rag/
 
 ```bash
 python -m nts_rag.cli evaluar -k 5
+python -m nts_rag.cli evaluar --archivo eval/*.jsonl -k 5 10 20 --por-tipo
 ```
 
-Mide `Hit@k`: que la página y la sección esperadas estén entre las fuentes
-recuperadas. El conjunto incluye cinco preguntas fuera de alcance para comprobar
-la abstención.
+Por cada corte `k` mide `hit`, `recall` (fracción de fuentes esperadas
+recuperadas), preguntas `completas` y `precision`; además, si el sistema responde
+o se abstiene cuando debe. `--sin-respuesta` mide solo la recuperación y `--json`
+devuelve el resumen en JSON.
 
-Resultado actual: **Hit@1 = 20/20** y **Hit@5 = 20/20**; 4/5 preguntas fuera de
-alcance se abstienen y la restante devuelve un fragmento relacionado (el
-paracetamol sí se menciona en el Anexo 6).
+| Set | Contenido |
+|---|---|
+| `eval/preguntas.jsonl` | 20 lookups + 5 fuera de alcance (regresión) |
+| `eval/agregacion.jsonl` | 7 de agregación (edad, rescate, gestante) + 3 negativas |
+| `eval/ambiguedades.jsonl` | 4 preguntas de borde con estado/motivo esperados + 3 negativas |
+| `eval/comparativas.jsonl` | 3 comparativas 2022/2026 (necesitan la NTS 196 indexada) |
 
-Estos números miden solo preguntas de lookup de una ficha. Los sets de agregación,
-comparación y ambigüedad están definidos en `docs/CONTEXTO_MEJORAS.md` pero todavía
-no se evalúan.
+Línea base actual (modo extractivo): lookups **20/20** en @5; agregación
+recall@10 **0.39** (2/7 completas); borde 0.31; comparativas 0.33; abstención
+correcta en 6/9 negativas. El detalle está en
+[`docs/CONTEXTO_MEJORAS.md` §9.3](docs/CONTEXTO_MEJORAS.md).
 
 ## Limitaciones
 
