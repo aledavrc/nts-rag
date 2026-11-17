@@ -1,0 +1,38 @@
+# Workflow de CI listo, pendiente de activar.
+# Para activarlo (requiere un token de GitHub con permiso `workflow`):
+#   mkdir -p .github/workflows && git mv docs/ci-pendiente.yml .github/workflows/ci.yml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint y tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv y Python 3.12
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # El lockfile fija las versiones: si pyproject.toml cambia sin `uv lock`, falla.
+      - name: Dependencias (uv.lock)
+        run: uv sync --frozen --extra dev
+
+      - name: Ruff
+        run: uv run ruff check src tests pipelines
+
+      # Incluye los smoke tests del índice versionado (corpus_lint, frescura del
+      # manifiesto, IDs estables) y la precisión del diff frente a los sets
+      # etiquetados. No necesita el modelo de embeddings.
+      - name: Pytest
+        run: uv run pytest -q

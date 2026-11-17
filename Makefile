@@ -13,11 +13,15 @@ DOCS := corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-1.md \
         corpus/markdown/8265031-nts-n-246-minsa-digiesp-2026-parte-2.md \
         corpus/markdown/nts-n-196-minsa-digiesp-2022.md
 
-.PHONY: install chunks index ingest serve test lint doctor docker-build docker-up docker-down clean-index inspeccionar
+.PHONY: install lock chunks index ingest serve test lint doctor docker-build docker-up docker-down clean-index inspeccionar
 
+# Instala exactamente las versiones de uv.lock.
 install:
-	uv venv --python 3.12 .venv
-	uv pip install -e ".[dev]"
+	uv sync --extra dev
+
+# Regenera uv.lock tras cambiar dependencias en pyproject.toml.
+lock:
+	uv lock
 
 # Regenera los chunks desde los Markdown ya auditados.
 chunks:

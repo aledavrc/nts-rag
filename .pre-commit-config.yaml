@@ -1,0 +1,29 @@
+# Instalar una vez:  uv run pre-commit install --hook-type pre-commit --hook-type pre-push
+# (pre-commit no es dependencia del proyecto: `uv tool install pre-commit` o `pipx`).
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5  # misma versión que uv.lock
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(src|tests|pipelines)/
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      # El índice versionado (chroma.sqlite3) ronda los 15 MB.
+      - id: check-added-large-files
+        args: [--maxkb=30000]
+
+  - repo: local
+    hooks:
+      # Antes de cada push: la suite completa (incluye los smoke tests del índice).
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
